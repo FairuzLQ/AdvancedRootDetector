@@ -1,0 +1,1 @@
+-keep class id.jayatech.rootdetector.** { *; }

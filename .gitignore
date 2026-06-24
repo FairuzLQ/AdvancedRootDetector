@@ -1,0 +1,39 @@
+# Gradle
+.gradle/
+build/
+**/build/
+*.hprof
+
+# Local config
+local.properties
+*.local.properties
+
+# Android Studio / IntelliJ
+*.iml
+*.iws
+*.ipr
+.idea/
+*.DS_Store
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Claude Code internal settings
+.claude/
+
+# Generated
+gen/
+out/
+release/
+
+# Keystores
+*.jks
+*.keystore
+
+# APKs & AABs (don't commit binaries)
+*.apk
+*.aab
+
+# NDK CMake cache
+**/.cxx/
+**/cmake-build-*/
