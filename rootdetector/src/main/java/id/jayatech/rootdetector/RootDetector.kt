@@ -34,7 +34,8 @@ object RootDetector {
             FileSystemDetector(context),
             PropsDetector(context),
             MountDetector(context),
-            NativeDetector(context)
+            NativeDetector(context),
+            IntegrityDetector(context)
         )
 
         val allIndicators = mutableListOf<RootIndicator>()
