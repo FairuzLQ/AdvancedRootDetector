@@ -663,6 +663,77 @@ static std::vector<std::string> scan_sbin_paths() {
 }
 
 // =============================================================================
+// Process table scan via /proc/<pid>/comm + cmdline
+//
+// DenyList = mount namespace isolation ONLY. It does NOT hide processes.
+// magiskd/ksud/apd appear in /proc regardless of DenyList or Shamiko.
+// /proc/<pid>/comm is readable by untrusted_app per Android SELinux policy.
+// =============================================================================
+static std::vector<std::string> scan_proc_for_root_daemons() {
+    std::vector<std::string> hits;
+
+    static const char* kRootComms[] = {
+        "magiskd", "magisk32", "magisk64", "magiskinit", "magiskpolicy",
+        "ksud", "ksumd",
+        "apd", "kpatch",
+        nullptr
+    };
+
+    DIR* dir = opendir("/proc");
+    if (!dir) return hits;
+
+    struct dirent* ent;
+    while ((ent = readdir(dir)) != nullptr) {
+        if (!isdigit((unsigned char)ent->d_name[0])) continue;
+        const char* pid = ent->d_name;
+        bool found_this_pid = false;
+
+        // 1. /proc/<pid>/comm — short name (≤15 chars), exact process name
+        char path[64];
+        snprintf(path, sizeof(path), "/proc/%s/comm", pid);
+        char comm[32] = {};
+        int fd = open(path, O_RDONLY);
+        if (fd >= 0) {
+            read(fd, comm, sizeof(comm) - 1);
+            close(fd);
+            for (int i = 0; comm[i]; i++) if (comm[i] == '\n') { comm[i] = 0; break; }
+            for (int k = 0; kRootComms[k]; k++) {
+                if (strcmp(comm, kRootComms[k]) == 0) {
+                    hits.push_back(std::string(comm) + " (PID " + pid + ")");
+                    found_this_pid = true;
+                    break;
+                }
+            }
+        }
+
+        if (found_this_pid) continue;
+
+        // 2. /proc/<pid>/cmdline — full argv[0] (catches paths like /sbin/magisk --daemon)
+        snprintf(path, sizeof(path), "/proc/%s/cmdline", pid);
+        char cmdline[256] = {};
+        fd = open(path, O_RDONLY);
+        if (fd >= 0) {
+            ssize_t n = read(fd, cmdline, sizeof(cmdline) - 1);
+            close(fd);
+            if (n > 0) {
+                for (ssize_t i = 0; i < n; i++) if (cmdline[i] == '\0') cmdline[i] = ' ';
+                std::string cmd(cmdline, n);
+                std::string lower = cmd;
+                for (char& c : lower) c = (char)tolower((unsigned char)c);
+                if (lower.find("magiskd") != std::string::npos ||
+                    lower.find("magisk --") != std::string::npos ||
+                    lower.find("/magisk64") != std::string::npos ||
+                    lower.find("/magisk32") != std::string::npos) {
+                    hits.push_back("PID " + std::string(pid) + ": " + cmd.substr(0, 60));
+                }
+            }
+        }
+    }
+    closedir(dir);
+    return hits;
+}
+
+// =============================================================================
 // JNI bridge — aggregate all results
 // =============================================================================
 
@@ -708,6 +779,11 @@ Java_id_jayatech_rootdetector_detector_NativeDetector_nativeScan(JNIEnv* env, jo
     // Kitsune Mask DenyList may leave /sbin unmounted in app namespace unlike stock Magisk.
     for (auto& s : scan_sbin_paths())
         results.push_back("SBIN_PATH:" + s);
+
+    // --- Process table scan — DenyList hides mounts, NOT processes ---
+    // magiskd/ksud/apd remain visible in /proc regardless of DenyList or Shamiko.
+    for (auto& s : scan_proc_for_root_daemons())
+        results.push_back("ROOT_PROC:" + s);
 
     // --- Kernel version strings — kernel-owned, zero userspace spoofability ---
     for (auto& s : check_kernel_version_strings())

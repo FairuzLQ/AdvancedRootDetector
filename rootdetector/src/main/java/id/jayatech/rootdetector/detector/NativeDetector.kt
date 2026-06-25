@@ -30,6 +30,7 @@ import id.jayatech.rootdetector.model.RootIndicator
  *   UNIX_SOCKET: — root daemon socket in /proc/net/unix
  *   SBIN_PATH:   — /sbin root binary found via direct syscall (Kitsune/Magisk /sbin leak)
  *   KERNEL_STR:  — root-related string in /proc/version (kernel-level, unspoofable)
+ *   ROOT_PROC:   — root daemon found in /proc process table (DenyList doesn't hide processes)
  */
 internal class NativeDetector(context: Context) : BaseDetector(context) {
 
@@ -257,6 +258,19 @@ internal class NativeDetector(context: Context) : BaseDetector(context) {
                 title = "[Native] Root String in Kernel Version",
                 detail = "Root-related keyword found in /proc/version — custom/modified kernel",
                 risk = RiskLevel.HIGH,
+                evidence = it
+            )
+        }
+
+        // Root daemon process in /proc — DenyList is mount namespace isolation only.
+        // It cannot hide processes. magiskd/ksud/apd appear in /proc regardless.
+        byPrefix["ROOT_PROC"]?.takeIf { it.isNotEmpty() }?.let {
+            findings += RootIndicator(
+                id = "native_root_proc",
+                category = DetectorCategory.NATIVE,
+                title = "[Native] Root Daemon Process Running",
+                detail = "Root daemon (magiskd/ksud/apd) found in /proc process table — DenyList cannot hide processes",
+                risk = RiskLevel.CRITICAL,
                 evidence = it
             )
         }

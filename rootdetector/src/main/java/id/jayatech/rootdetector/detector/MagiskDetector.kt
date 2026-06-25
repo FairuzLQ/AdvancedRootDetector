@@ -215,16 +215,23 @@ internal class MagiskDetector(context: Context) : BaseDetector(context) {
         } catch (_: Exception) { return null }
         if (pmOutput.isBlank()) return null
 
-        // DEX class descriptors (slash-separated, L-prefixed) only appear when the APK
-        // ACTUALLY CONTAINS these classes — not when RASP code merely checks for Magisk
-        // via PackageManager (those use dot-separated Java strings like "com.topjohnwu.magisk").
-        // RASP detection code: "com.topjohnwu.magisk"  ← dot, won't match
-        // Real Magisk stub DEX: "Lcom/topjohnwu/magisk/core/..."  ← slash, will match
+        // Magisk stub DEX signatures — two tiers:
+        // Tier 1 (slash DEX descriptors): only present when APK actually CONTAINS these classes
+        // Tier 2 (specific dot strings): Magisk stub uses reflection to load internals;
+        //   the specific sub-package paths below (.core.su, .core.app, StubApk) are
+        //   Magisk-internal and NOT referenced by RASP detection libraries
+        //   (RASP only checks the top-level package "com.topjohnwu.magisk" for PM calls)
         val magiskSigs = listOf(
-            "Lcom/topjohnwu/magisk/",    // real Magisk stub class descriptors
-            "Lio/github/huskydg/magisk/", // Kitsune Mask (HuskyDG fork) class descriptors
-            "Lio/github/vvb2060/magisk/", // Magisk Alpha fork class descriptors
-            "StubApk",                    // Magisk's own stub bootstrap class name
+            // Tier 1 — DEX class descriptors (slash format)
+            "Lcom/topjohnwu/magisk/",
+            "Lio/github/huskydg/magisk/",
+            "Lio/github/vvb2060/magisk/",
+            // Tier 2 — Internal Magisk class references via reflection (dot format, specific)
+            "topjohnwu.magisk.core.su",   // SU module — RASP only checks top package
+            "topjohnwu.magisk.core.app",  // App init — not in RASP
+            "huskydg.magisk.core",        // Kitsune internal package
+            "StubApk",                    // Magisk stub bootstrap class name
+            "MagiskdService",             // Magisk daemon service class
         )
         val selfPkg = context.packageName
         val evidence = mutableListOf<String>()
