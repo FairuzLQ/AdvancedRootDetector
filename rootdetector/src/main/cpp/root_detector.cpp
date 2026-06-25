@@ -610,6 +610,33 @@ static std::string get_status_field(const char* field) {
 }
 
 // =============================================================================
+// Kernel version string — /proc/version is kernel-owned, cannot be spoofed by userspace.
+// Custom root kernels (KernelSU, Kitsune, APatch) often leave strings here.
+// =============================================================================
+static std::vector<std::string> check_kernel_version_strings() {
+    std::vector<std::string> hits;
+    std::ifstream f("/proc/version");
+    if (!f.is_open()) return hits;
+    std::string ver;
+    std::getline(f, ver);
+    f.close();
+    if (ver.empty()) return hits;
+
+    static const char* kSuspect[] = {
+        "ksu", "kernelsu", "kitsune", "apatch",
+        "magisk", "userdebug", "test-keys",
+        nullptr
+    };
+    std::string lower = ver;
+    for (char& c : lower) c = (char)tolower((unsigned char)c);
+    for (int i = 0; kSuspect[i]; i++) {
+        if (lower.find(kSuspect[i]) != std::string::npos)
+            hits.push_back(std::string(kSuspect[i]) + " in /proc/version: " + ver);
+    }
+    return hits;
+}
+
+// =============================================================================
 // /sbin path scan — direct syscall, bypasses any in-process libc hooks
 // Kitsune Mask DenyList may leave /sbin accessible when stock Magisk DenyList does not.
 // =============================================================================
@@ -681,6 +708,10 @@ Java_id_jayatech_rootdetector_detector_NativeDetector_nativeScan(JNIEnv* env, jo
     // Kitsune Mask DenyList may leave /sbin unmounted in app namespace unlike stock Magisk.
     for (auto& s : scan_sbin_paths())
         results.push_back("SBIN_PATH:" + s);
+
+    // --- Kernel version strings — kernel-owned, zero userspace spoofability ---
+    for (auto& s : check_kernel_version_strings())
+        results.push_back("KERNEL_STR:" + s);
 
     // --- Capability elevation ---
     std::string cap_eff;

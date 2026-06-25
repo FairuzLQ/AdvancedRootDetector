@@ -25,7 +25,9 @@ internal abstract class BaseDetector(protected val context: Context) {
     } catch (_: Exception) { false }
 
     protected fun runShellCommand(cmd: String): String = try {
-        val process = Runtime.getRuntime().exec(cmd)
+        // Always go through /system/bin/sh so that PATH, profile.d, and shell builtins
+        // are initialized. Without this, /sbin is NOT in PATH and `which su` returns empty.
+        val process = Runtime.getRuntime().exec(arrayOf("/system/bin/sh", "-c", cmd))
         process.inputStream.bufferedReader().readText().trim()
     } catch (_: Exception) { "" }
 }

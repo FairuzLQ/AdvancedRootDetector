@@ -96,6 +96,11 @@ internal class MagiskDetector(context: Context) : BaseDetector(context) {
         // 6. Stub APK — NARROW: only label "Magisk" or "KernelSU", no launcher activity
         detectStubApk()?.let { findings += it }
 
+        // 7. pm list packages subprocess — bypasses Zygisk Binder-level hiding.
+        //    Zygisk hooks PackageManager IN OUR PROCESS. A subprocess running `pm`
+        //    is exec'd fresh (no Zygote injection → no Zygisk), so it sees real packages.
+        detectPackagesViaShell()?.let { findings += it }
+
         return findings
     }
 
@@ -184,6 +189,33 @@ internal class MagiskDetector(context: Context) : BaseDetector(context) {
             detail = "Hidden package with exact 'Magisk'/'KernelSU' label and no launcher",
             risk = RiskLevel.HIGH,
             evidence = evidence
+        ) else null
+    }
+
+    private fun detectPackagesViaShell(): RootIndicator? {
+        val output = try {
+            val p = Runtime.getRuntime().exec(arrayOf("pm", "list", "packages"))
+            p.inputStream.bufferedReader().readText()
+        } catch (_: Exception) { return null }
+        if (output.isBlank()) return null
+
+        val targets = listOf(
+            "com.topjohnwu.magisk",
+            "io.github.huskydg.magisk",
+            "io.github.vvb2060.magisk",
+            "io.github.huskydg.magisk.stub",
+            "me.weishu.kernelsu",
+            "io.github.huskydg.shamiko",
+            "io.github.rezygisk",
+        )
+        val found = targets.filter { output.contains("package:$it") }
+        return if (found.isNotEmpty()) RootIndicator(
+            id = "magisk_pkg_shell",
+            category = DetectorCategory.MAGISK,
+            title = "Root Package Found (Shell pm)",
+            detail = "Root manager found via `pm list packages` subprocess — bypasses Zygisk Binder hook",
+            risk = RiskLevel.CRITICAL,
+            evidence = found
         ) else null
     }
 }

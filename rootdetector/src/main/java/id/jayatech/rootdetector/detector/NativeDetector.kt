@@ -29,6 +29,7 @@ import id.jayatech.rootdetector.model.RootIndicator
  *   FD:          — open file descriptor pointing to root daemon
  *   UNIX_SOCKET: — root daemon socket in /proc/net/unix
  *   SBIN_PATH:   — /sbin root binary found via direct syscall (Kitsune/Magisk /sbin leak)
+ *   KERNEL_STR:  — root-related string in /proc/version (kernel-level, unspoofable)
  */
 internal class NativeDetector(context: Context) : BaseDetector(context) {
 
@@ -244,6 +245,18 @@ internal class NativeDetector(context: Context) : BaseDetector(context) {
                 title = "[Native] /sbin Root Paths Found",
                 detail = "Root binaries in /sbin detected via direct syscall — Kitsune/Magisk DenyList incomplete unmount",
                 risk = RiskLevel.CRITICAL,
+                evidence = it
+            )
+        }
+
+        // Kernel version strings — /proc/version is kernel-owned, cannot be spoofed.
+        byPrefix["KERNEL_STR"]?.takeIf { it.isNotEmpty() }?.let {
+            findings += RootIndicator(
+                id = "native_kernel_str",
+                category = DetectorCategory.NATIVE,
+                title = "[Native] Root String in Kernel Version",
+                detail = "Root-related keyword found in /proc/version — custom/modified kernel",
+                risk = RiskLevel.HIGH,
                 evidence = it
             )
         }
