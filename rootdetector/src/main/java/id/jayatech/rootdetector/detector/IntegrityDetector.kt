@@ -45,11 +45,81 @@ internal class IntegrityDetector(context: Context) : BaseDetector(context) {
 
     override fun detect(): List<RootIndicator> {
         val findings = mutableListOf<RootIndicator>()
-        detectViaKeyAttestation()?.let { findings += it }
+
+        // Read the real system prop — set by the bootloader itself at boot,
+        // very difficult to fake without also hooking property reads in every process.
+        val propBootState = readProp("ro.boot.verifiedbootstate")    // "green" / "orange" / "yellow" / "red"
+        val propSecure    = readProp("ro.secure")                    // "0" on unlocked eng builds
+
+        val attest = runKeyAttestation()
+
+        when {
+            // Case 1: TEE attestation confirms compromise directly
+            attest != null &&
+            attest.securityLevel != SecurityLevel.SOFTWARE &&
+            (!attest.deviceLocked || attest.bootState != BootState.VERIFIED) -> {
+                val secStr  = attest.securityLevel.label
+                val stateStr = attest.bootState.name.lowercase().replaceFirstChar { it.uppercaseChar() }
+                findings += RootIndicator(
+                    id       = "integrity_key_attest",
+                    category = DetectorCategory.INTEGRITY,
+                    title    = "Hardware Attestation: Boot Integrity Compromised",
+                    detail   = "TEE Key Attestation ($secStr) confirms bootloader is unlocked — " +
+                                "cannot be spoofed by Magisk DenyList, Shamiko, or any userspace hook",
+                    risk     = RiskLevel.HIGH,
+                    evidence = listOf(
+                        "Attestation source: $secStr",
+                        "deviceLocked: ${attest.deviceLocked}",
+                        "verifiedBootState: $stateStr"
+                    )
+                )
+            }
+
+            // Case 2: PlayIntegrity Fix / USNF bypass detected
+            // Attestation claims locked+verified BUT system prop says bootloader is orange.
+            // These two cannot both be true on a genuine device — one of them is lying.
+            // The prop is set by the bootloader itself; the attestation is being manipulated.
+            attest != null &&
+            attest.securityLevel != SecurityLevel.SOFTWARE &&
+            attest.deviceLocked && attest.bootState == BootState.VERIFIED &&
+            propBootState == "orange" -> {
+                findings += RootIndicator(
+                    id       = "integrity_attest_bypass",
+                    category = DetectorCategory.INTEGRITY,
+                    title    = "Key Attestation Bypass Detected",
+                    detail   = "TEE claims deviceLocked=true/VERIFIED but ro.boot.verifiedbootstate=orange — " +
+                                "a module (PlayIntegrity Fix / USNF) is intercepting Key Attestation at the HAL layer",
+                    risk     = RiskLevel.CRITICAL,
+                    evidence = listOf(
+                        "ro.boot.verifiedbootstate: orange (bootloader unlocked — set by bootloader, hard to fake)",
+                        "Key Attestation: deviceLocked=true, verifiedBootState=Verified (contradicts prop → bypass active)",
+                        "Common culprits: PlayIntegrity Fix, Universal SafetyNet Fix, MagiskHide Props Config"
+                    )
+                )
+            }
+
+            // Case 3: Software-backed attestation returned (key attestation bypass via software provider)
+            // We cannot trust the content, but the fact it's software-backed is itself suspicious.
+            attest != null && attest.securityLevel == SecurityLevel.SOFTWARE && propBootState == "orange" -> {
+                findings += RootIndicator(
+                    id       = "integrity_sw_attest",
+                    category = DetectorCategory.INTEGRITY,
+                    title    = "Software-Backed Attestation (Bypass Active)",
+                    detail   = "Key Attestation returned software-level security (not from TEE) while bootloader prop shows orange — " +
+                                "a bypass module replaced hardware attestation with a software implementation",
+                    risk     = RiskLevel.HIGH,
+                    evidence = listOf(
+                        "Attestation security level: Software (should be TEE/StrongBox on real hardware)",
+                        "ro.boot.verifiedbootstate: orange"
+                    )
+                )
+            }
+        }
+
         return findings
     }
 
-    private fun detectViaKeyAttestation(): RootIndicator? {
+    private fun runKeyAttestation(): AttestInfo? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return null
         return try {
             val ks = KeyStore.getInstance("AndroidKeyStore").also { it.load(null) }
@@ -71,34 +141,7 @@ internal class IntegrityDetector(context: Context) : BaseDetector(context) {
             if (chain.isNullOrEmpty()) return null
             val cert = chain[0] as? X509Certificate ?: return null
             val extDer = cert.getExtensionValue(ATTESTATION_OID) ?: return null
-            val info = parseAttestationExt(extDer) ?: return null
-
-            // Ignore software-backed — a key attestation bypass module can fake this
-            if (info.securityLevel == SecurityLevel.SOFTWARE) return null
-
-            val secStr = when (info.securityLevel) {
-                SecurityLevel.TEE       -> "TrustedEnvironment"
-                SecurityLevel.STRONGBOX -> "StrongBox"
-                else                   -> "Unknown"
-            }
-            val bootStr = info.bootState.name
-                .lowercase().replaceFirstChar { it.uppercaseChar() }
-
-            if (!info.deviceLocked || info.bootState != BootState.VERIFIED) {
-                RootIndicator(
-                    id = "integrity_key_attest",
-                    category = DetectorCategory.INTEGRITY,
-                    title = "Hardware Attestation: Boot Integrity Compromised",
-                    detail = "Android TEE Key Attestation confirms the device's boot state is not verified — " +
-                             "this check runs inside secure hardware and cannot be spoofed by Magisk DenyList or any software hook",
-                    risk = RiskLevel.HIGH,
-                    evidence = listOf(
-                        "Attestation source: $secStr (hardware-backed)",
-                        "deviceLocked: ${info.deviceLocked}",
-                        "verifiedBootState: $bootStr"
-                    )
-                )
-            } else null
+            parseAttestationExt(extDer)
         } catch (_: Exception) {
             runCatching {
                 KeyStore.getInstance("AndroidKeyStore").also { it.load(null) }.deleteEntry(KEY_ALIAS)
@@ -128,7 +171,9 @@ internal class IntegrityDetector(context: Context) : BaseDetector(context) {
     // }
     // -------------------------------------------------------------------------
 
-    private enum class SecurityLevel { SOFTWARE, TEE, STRONGBOX, UNKNOWN }
+    private enum class SecurityLevel(val label: String) {
+        SOFTWARE("Software"), TEE("TrustedEnvironment"), STRONGBOX("StrongBox"), UNKNOWN("Unknown")
+    }
     private enum class BootState { VERIFIED, SELF_SIGNED, UNVERIFIED, FAILED, UNKNOWN }
     private data class AttestInfo(val securityLevel: SecurityLevel, val deviceLocked: Boolean, val bootState: BootState)
 
@@ -154,11 +199,10 @@ internal class IntegrityDetector(context: Context) : BaseDetector(context) {
         // 2. ENUMERATED attestationSecurityLevel — read
         if (p >= b.size || b[p] != 0x0A.toByte()) return null
         val (elLen, elOff) = derLen(b, p + 1)
-        val secLevelInt = derReadInt(b, elOff, elLen)
-        val secLevel = when (secLevelInt) {
-            0 -> SecurityLevel.SOFTWARE
-            1 -> SecurityLevel.TEE
-            2 -> SecurityLevel.STRONGBOX
+        val secLevel = when (derReadInt(b, elOff, elLen)) {
+            0    -> SecurityLevel.SOFTWARE
+            1    -> SecurityLevel.TEE
+            2    -> SecurityLevel.STRONGBOX
             else -> SecurityLevel.UNKNOWN
         }
         p = elOff + elLen
