@@ -86,8 +86,11 @@ internal class BinaryDetector(context: Context) : BaseDetector(context) {
         // 3b. Renamed Frida binary — large ELF in temp dirs (Frida server is 30-60MB, hard to fake)
         detectRenamedLargeElf()?.let { findings += it }
 
-        // 4. su via PATH — `which su` returning a path is stronger than file existence alone
+        // 4. su via PATH — shell subprocess is not affected by Zygisk in-process hooks
         detectSuViaWhich()?.let { findings += it }
+
+        // 4b. Other root-exclusive binaries via `which` — same subprocess isolation
+        detectRootBinsViaWhich()?.let { findings += it }
 
         // 5. Actually execute su and observe result — most reliable test
         detectSuExecution()?.let { findings += it }
@@ -156,25 +159,40 @@ internal class BinaryDetector(context: Context) : BaseDetector(context) {
     }
 
     /**
-     * `which su` — if the shell can find su in PATH, root shell is available.
-     *
-     * FALSE POSITIVE note: on GrapheneOS/CalyxOS, su may exist as a restricted
-     * stub that returns an error even when called. We check executable permission too.
+     * `which su` — spawns a separate shell process (not in our Zygisk-injected address space).
+     * Zygisk's PLT/GOT hooks stay in our process memory; the forked shell has clean Bionic.
+     * If the shell finds su, it genuinely exists in the current mount namespace.
+     * DO NOT verify via Java File API — those go through hooked libc and will return false.
      */
     private fun detectSuViaWhich(): RootIndicator? {
         val output = runShellCommand("which su").trim()
-        if (output.isEmpty()) return null
-        // Verify the path is actually executable
-        val suFile = java.io.File(output)
-        if (!suFile.canExecute() && !fileExists(output)) return null
+        if (output.isEmpty() || !output.startsWith("/")) return null
         return RootIndicator(
             id = "binary_which_su",
             category = DetectorCategory.BINARY,
             title = "su Found in PATH",
-            detail = "`which su` returned a path: $output",
+            detail = "`which su` → $output",
             risk = RiskLevel.HIGH,
             evidence = listOf(output)
         )
+    }
+
+    // `which <bin>` for root-only tools — same logic as detectSuViaWhich
+    private fun detectRootBinsViaWhich(): RootIndicator? {
+        val bins = listOf("magisk", "magiskpolicy", "magiskinit", "ksud", "kitsune", "apd")
+        val found = mutableListOf<String>()
+        for (bin in bins) {
+            val path = runShellCommand("which $bin").trim()
+            if (path.startsWith("/")) found += "$bin → $path"
+        }
+        return if (found.isNotEmpty()) RootIndicator(
+            id = "binary_which_root_bins",
+            category = DetectorCategory.BINARY,
+            title = "Root Tool in PATH",
+            detail = "Root-exclusive binary found via `which` in separate shell process",
+            risk = RiskLevel.CRITICAL,
+            evidence = found
+        ) else null
     }
 
     private fun detectSuExecution(): RootIndicator? {

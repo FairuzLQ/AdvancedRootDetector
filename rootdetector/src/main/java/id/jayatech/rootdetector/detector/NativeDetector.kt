@@ -28,6 +28,7 @@ import id.jayatech.rootdetector.model.RootIndicator
  *   FUNC_HOOK:   — libc function owned by non-system library (interposition)
  *   FD:          — open file descriptor pointing to root daemon
  *   UNIX_SOCKET: — root daemon socket in /proc/net/unix
+ *   SBIN_PATH:   — /sbin root binary found via direct syscall (Kitsune/Magisk /sbin leak)
  */
 internal class NativeDetector(context: Context) : BaseDetector(context) {
 
@@ -229,6 +230,19 @@ internal class NativeDetector(context: Context) : BaseDetector(context) {
                 category = DetectorCategory.NATIVE,
                 title = "[Native] Frida Server Port Open",
                 detail = "TCP port 27042 is active — frida-server running (binary may be renamed to evade file-based detection)",
+                risk = RiskLevel.CRITICAL,
+                evidence = it
+            )
+        }
+
+        // /sbin root paths — direct syscall (bypasses Zygisk libc hooks on stat/fstatat).
+        // Kitsune Mask DenyList leaves /sbin visible in app mount namespace.
+        byPrefix["SBIN_PATH"]?.takeIf { it.isNotEmpty() }?.let {
+            findings += RootIndicator(
+                id = "native_sbin_paths",
+                category = DetectorCategory.NATIVE,
+                title = "[Native] /sbin Root Paths Found",
+                detail = "Root binaries in /sbin detected via direct syscall — Kitsune/Magisk DenyList incomplete unmount",
                 risk = RiskLevel.CRITICAL,
                 evidence = it
             )

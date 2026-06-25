@@ -610,6 +610,32 @@ static std::string get_status_field(const char* field) {
 }
 
 // =============================================================================
+// /sbin path scan — direct syscall, bypasses any in-process libc hooks
+// Kitsune Mask DenyList may leave /sbin accessible when stock Magisk DenyList does not.
+// =============================================================================
+static std::vector<std::string> scan_sbin_paths() {
+    static const char* kSbinPaths[] = {
+        "/sbin/su",
+        "/sbin/magisk",
+        "/sbin/magisk64",
+        "/sbin/magisk32",
+        "/sbin/.magisk",
+        "/sbin/magiskpolicy",
+        "/sbin/magiskinit",
+        "/sbin/kitsune",
+        "/sbin/ksud",
+        "/sbin/apd",
+        nullptr
+    };
+    std::vector<std::string> hits;
+    for (int i = 0; kSbinPaths[i]; i++) {
+        if (file_exists_syscall(kSbinPaths[i]))
+            hits.push_back(kSbinPaths[i]);
+    }
+    return hits;
+}
+
+// =============================================================================
 // JNI bridge — aggregate all results
 // =============================================================================
 
@@ -650,6 +676,11 @@ Java_id_jayatech_rootdetector_detector_NativeDetector_nativeScan(JNIEnv* env, jo
     // --- Frida port 27042 (catches renamed standalone frida-server) ---
     if (probe_frida_port())
         results.push_back("FRIDA_PORT:TCP port 27042 (0x69A2) is open — frida-server running (possibly renamed)");
+
+    // --- /sbin path scan via direct syscall (bypasses Zygisk libc hooks) ---
+    // Kitsune Mask DenyList may leave /sbin unmounted in app namespace unlike stock Magisk.
+    for (auto& s : scan_sbin_paths())
+        results.push_back("SBIN_PATH:" + s);
 
     // --- Capability elevation ---
     std::string cap_eff;
