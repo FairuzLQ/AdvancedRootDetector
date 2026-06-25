@@ -14,6 +14,7 @@ internal class PropsDetector(context: Context) : BaseDetector(context) {
         detectInsecureBuild()?.let { findings += it }
         detectSeLinux()?.let { findings += it }
         detectBootloaderState()?.let { findings += it }
+        detectRootRuntimeProps()?.let { findings += it }
         return findings
     }
 
@@ -119,6 +120,41 @@ internal class PropsDetector(context: Context) : BaseDetector(context) {
      *  - Risk: MEDIUM (bootloader unlocked is suspicious context, not proof).
      *  - "green" = fully locked and verified — safe.
      */
+    /**
+     * Magisk/Kitsune/KSU set runtime props during init scripts.
+     * DenyList only isolates mount namespaces — it does NOT clean system props.
+     * Props live in kernel shared memory (/dev/__properties__) and are immune to DenyList.
+     *
+     * We use a subprocess for getprop because Zygisk/Shamiko hooks prop access
+     * IN OUR PROCESS, but the subprocess (exec'd fresh) has no Zygisk injection.
+     */
+    private fun detectRootRuntimeProps(): RootIndicator? {
+        val directProps = listOf(
+            "ro.magisk.version",
+            "persist.sys.zygisk",
+            "ro.build.selinux",
+        )
+        val evidence = mutableListOf<String>()
+
+        for (key in directProps) {
+            val v = readProp(key)
+            if (v.isNotEmpty()) evidence += "$key=$v"
+        }
+
+        // Broad grep via subprocess — catches any root-related props
+        val grepOut = runShellCommand("getprop | grep -iE 'magisk|zygisk|kitsune|apatch'")
+        grepOut.lines().filter { it.isNotBlank() }.take(6).forEach { evidence += it.trim() }
+
+        return if (evidence.isNotEmpty()) RootIndicator(
+            id = "props_root_runtime",
+            category = DetectorCategory.PROPS,
+            title = "Root Runtime Properties",
+            detail = "Magisk/Kitsune/Zygisk system props found — DenyList cannot remove these",
+            risk = RiskLevel.CRITICAL,
+            evidence = evidence
+        ) else null
+    }
+
     private fun detectBootloaderState(): RootIndicator? {
         val evidence = mutableListOf<String>()
         var risk = RiskLevel.LOW

@@ -101,6 +101,10 @@ internal class MagiskDetector(context: Context) : BaseDetector(context) {
         //    is exec'd fresh (no Zygote injection → no Zygisk), so it sees real packages.
         detectPackagesViaShell()?.let { findings += it }
 
+        // 8. Renamed Magisk stub — "Hide Magisk" randomizes package name but DEX still
+        //    contains Magisk class path strings. Scan via ZipFile directly on APK files.
+        detectRenamedMagiskApk()?.let { findings += it }
+
         return findings
     }
 
@@ -188,6 +192,69 @@ internal class MagiskDetector(context: Context) : BaseDetector(context) {
             title = "Possible Magisk Stub APK",
             detail = "Hidden package with exact 'Magisk'/'KernelSU' label and no launcher",
             risk = RiskLevel.HIGH,
+            evidence = evidence
+        ) else null
+    }
+
+    /**
+     * Detect "Hide Magisk" (randomized package name) by scanning DEX content.
+     *
+     * When user renames Magisk to e.g. "Settings":
+     * - Package name is randomized → known-name checks fail
+     * - PackageManager API is Binder-hooked by Zygisk → isPackageInstalled() fails
+     * - BUT the stub APK still contains Magisk class path strings in its DEX
+     *
+     * We get APK paths from `pm list packages -f` subprocess (no Zygisk hooks),
+     * then open each small user APK directly via ZipFile (bypasses PackageManager),
+     * and search the DEX for Magisk-specific strings in the string pool.
+     */
+    private fun detectRenamedMagiskApk(): RootIndicator? {
+        val pmOutput = try {
+            val p = Runtime.getRuntime().exec(arrayOf("pm", "list", "packages", "-3", "-f"))
+            p.inputStream.bufferedReader().readText()
+        } catch (_: Exception) { return null }
+        if (pmOutput.isBlank()) return null
+
+        val magiskSigs = listOf("topjohnwu", "huskydg", "magisk.core", "magisk.ui", "MagiskSU")
+        val evidence = mutableListOf<String>()
+
+        for (line in pmOutput.lines()) {
+            if (!line.startsWith("package:")) continue
+            val rest = line.removePrefix("package:")
+            val eqIdx = rest.lastIndexOf('=')
+            if (eqIdx < 0) continue
+            val apkPath = rest.substring(0, eqIdx).trim()
+            val pkgName = rest.substring(eqIdx + 1).trim()
+            if (apkPath.isEmpty() || pkgName.isEmpty()) continue
+
+            val apkFile = java.io.File(apkPath)
+            if (!apkFile.exists() || apkFile.length() > 40_000_000L) continue
+
+            try {
+                java.util.zip.ZipFile(apkPath).use { zip ->
+                    for (dexName in listOf("classes.dex", "classes2.dex")) {
+                        val entry = zip.getEntry(dexName) ?: continue
+                        if (entry.size > 25_000_000L) continue
+                        val bytes = zip.getInputStream(entry).readBytes()
+                        val raw = String(bytes, Charsets.ISO_8859_1)
+                        for (sig in magiskSigs) {
+                            if (raw.contains(sig)) {
+                                evidence += "$pkgName → '$sig' in $dexName"
+                                break
+                            }
+                        }
+                        if (evidence.any { it.startsWith(pkgName) }) break
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        return if (evidence.isNotEmpty()) RootIndicator(
+            id = "magisk_renamed_stub",
+            category = DetectorCategory.MAGISK,
+            title = "Renamed Magisk Stub Detected",
+            detail = "User APK contains Magisk class references — package hidden via 'Hide Magisk' feature",
+            risk = RiskLevel.CRITICAL,
             evidence = evidence
         ) else null
     }
