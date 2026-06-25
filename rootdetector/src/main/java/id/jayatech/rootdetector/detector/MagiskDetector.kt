@@ -215,7 +215,18 @@ internal class MagiskDetector(context: Context) : BaseDetector(context) {
         } catch (_: Exception) { return null }
         if (pmOutput.isBlank()) return null
 
-        val magiskSigs = listOf("topjohnwu", "huskydg", "magisk.core", "magisk.ui", "MagiskSU")
+        // DEX class descriptors (slash-separated, L-prefixed) only appear when the APK
+        // ACTUALLY CONTAINS these classes — not when RASP code merely checks for Magisk
+        // via PackageManager (those use dot-separated Java strings like "com.topjohnwu.magisk").
+        // RASP detection code: "com.topjohnwu.magisk"  ← dot, won't match
+        // Real Magisk stub DEX: "Lcom/topjohnwu/magisk/core/..."  ← slash, will match
+        val magiskSigs = listOf(
+            "Lcom/topjohnwu/magisk/",    // real Magisk stub class descriptors
+            "Lio/github/huskydg/magisk/", // Kitsune Mask (HuskyDG fork) class descriptors
+            "Lio/github/vvb2060/magisk/", // Magisk Alpha fork class descriptors
+            "StubApk",                    // Magisk's own stub bootstrap class name
+        )
+        val selfPkg = context.packageName
         val evidence = mutableListOf<String>()
 
         for (line in pmOutput.lines()) {
@@ -226,6 +237,7 @@ internal class MagiskDetector(context: Context) : BaseDetector(context) {
             val apkPath = rest.substring(0, eqIdx).trim()
             val pkgName = rest.substring(eqIdx + 1).trim()
             if (apkPath.isEmpty() || pkgName.isEmpty()) continue
+            if (pkgName == selfPkg) continue // never flag ourselves
 
             val apkFile = java.io.File(apkPath)
             if (!apkFile.exists()) continue
