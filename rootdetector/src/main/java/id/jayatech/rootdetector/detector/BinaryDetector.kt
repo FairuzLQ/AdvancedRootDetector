@@ -80,8 +80,11 @@ internal class BinaryDetector(context: Context) : BaseDetector(context) {
             )
         }
 
-        // 3. Frida — file-based only (TCP port check removed: unreliable, any service on port 27042 would FP)
+        // 3. Frida — file-based (by known name)
         detectFridaFiles()?.let { findings += it }
+
+        // 3b. Renamed Frida binary — large ELF in temp dirs (Frida server is 30-60MB, hard to fake)
+        detectRenamedLargeElf()?.let { findings += it }
 
         // 4. su via PATH — `which su` returning a path is stronger than file existence alone
         detectSuViaWhich()?.let { findings += it }
@@ -109,6 +112,45 @@ internal class BinaryDetector(context: Context) : BaseDetector(context) {
             title = "Frida Server Binary Found",
             detail = "Frida dynamic instrumentation server file found — device under analysis",
             risk = RiskLevel.CRITICAL,
+            evidence = evidence
+        ) else null
+    }
+
+    /**
+     * Scan /data/local/tmp for large ELF executables that don't have "frida" in the name.
+     * Frida-server is ~30-60MB. Legitimate tools in this dir are small (<5MB).
+     * An unknown large ELF there is strongly suspicious — renamed Frida or other root tool.
+     */
+    private fun detectRenamedLargeElf(): RootIndicator? {
+        val elfMagic = byteArrayOf(0x7F, 'E'.code.toByte(), 'L'.code.toByte(), 'F'.code.toByte())
+        val minSizeBytes = 20L * 1024 * 1024 // 20MB lower bound
+        val searchDirs = listOf("/data/local/tmp", "/data/local")
+        val evidence = mutableListOf<String>()
+
+        for (dir in searchDirs) {
+            val d = java.io.File(dir)
+            if (!d.exists() || !d.isDirectory) continue
+            d.listFiles()?.forEach { f ->
+                if (!f.isFile) return@forEach
+                if (f.name.startsWith("frida", ignoreCase = true)) return@forEach // already caught
+                if (f.length() < minSizeBytes) return@forEach
+                try {
+                    java.io.RandomAccessFile(f, "r").use { raf ->
+                        val magic = ByteArray(4)
+                        if (raf.read(magic) == 4 && magic.contentEquals(elfMagic)) {
+                            evidence += "${f.absolutePath} (${f.length() / 1024 / 1024}MB, ELF)"
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+
+        return if (evidence.isNotEmpty()) RootIndicator(
+            id = "frida_renamed_elf",
+            category = DetectorCategory.BINARY,
+            title = "Large Unknown ELF in Temp Dir",
+            detail = "Large ELF binary (>20MB) in /data/local/tmp with non-Frida name — likely renamed Frida server or other root tool",
+            risk = RiskLevel.MEDIUM,
             evidence = evidence
         ) else null
     }

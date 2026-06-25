@@ -222,6 +222,18 @@ internal class NativeDetector(context: Context) : BaseDetector(context) {
             )
         }
 
+        // Frida port 27042 — catches standalone frida-server even when binary is renamed
+        byPrefix["FRIDA_PORT"]?.takeIf { it.isNotEmpty() }?.let {
+            findings += RootIndicator(
+                id = "native_frida_port",
+                category = DetectorCategory.NATIVE,
+                title = "[Native] Frida Server Port Open",
+                detail = "TCP port 27042 is active — frida-server running (binary may be renamed to evade file-based detection)",
+                risk = RiskLevel.CRITICAL,
+                evidence = it
+            )
+        }
+
         return findings
     }
 }

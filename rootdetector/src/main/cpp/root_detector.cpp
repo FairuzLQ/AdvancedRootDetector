@@ -248,14 +248,26 @@ static std::vector<std::string> probe_loaded_libs() {
 static std::vector<std::string> probe_root_symbols() {
     std::vector<std::string> found;
     struct { const char* sym; const char* tag; } probes[] = {
+        // Xposed / LSPosed
         { "xposedInit",                    "Classic Xposed module init"        },
+        { "lspd_context",                  "LSPosed context"                   },
+        // Zygisk
         { "zygisk_module_entry",           "Zygisk module entry"               },
+        // Riru
         { "riru_api_version",              "Riru framework API version"        },
         { "riru_api_version_backup",       "Riru backup symbol"                },
+        // KSU
         { "ksu_hook_func",                 "KernelSU hook function"            },
-        { "lspd_context",                  "LSPosed context"                   },
+        // Pine / Dreamland
         { "pine_bridge_init",              "Pine bridge init"                  },
         { "dreamland_init",                "Dreamland init"                    },
+        // Frida — present in ANY Frida gadget/agent regardless of filename or rename
+        { "frida_agent_main",              "Frida agent main entry"            },
+        { "gum_init_embedded",             "Frida Gum embedded init"           },
+        { "gum_process_enumerate_modules", "Frida Gum module enumerator"       },
+        { "frida_deinit",                  "Frida runtime deinit"              },
+        { "gum_interceptor_obtain",        "Frida Gum interceptor"             },
+        { "gum_memory_scan",               "Frida Gum memory scan"             },
         { nullptr, nullptr }
     };
     for (int i = 0; probes[i].sym; i++) {
@@ -264,6 +276,37 @@ static std::vector<std::string> probe_root_symbols() {
         }
     }
     return found;
+}
+
+// =============================================================================
+// 6b. Frida port probe — /proc/net/tcp[6] for port 27042 (0x69A2)
+//
+//     Port 27042 is Frida's well-known default. It won't appear for a renamed
+//     gadget (which is in-process), but catches standalone frida-server even
+//     if the binary is renamed, since the port remains the same unless explicitly
+//     changed. Reported as FRIDA_PORT to distinguish from in-process detection.
+// =============================================================================
+
+static bool probe_frida_port() {
+    // 27042 in big-endian hex = 0x69A2
+    const char* tcp_files[] = { "/proc/net/tcp", "/proc/net/tcp6", nullptr };
+    for (int f = 0; tcp_files[f]; f++) {
+        std::ifstream tcp(tcp_files[f]);
+        if (!tcp.is_open()) continue;
+        std::string line;
+        while (std::getline(tcp, line)) {
+            // local_address field: "IP:PORT" — port is last 4 hex chars before space
+            // e.g. "00000000:69A2 ..."
+            size_t colon = line.find(':');
+            if (colon == std::string::npos) continue;
+            // Port is the 4 chars after the colon
+            std::string port_hex = line.substr(colon + 1, 4);
+            // Normalise to upper
+            for (auto& c : port_hex) c = (char)toupper((unsigned char)c);
+            if (port_hex == "69A2") return true;
+        }
+    }
+    return false;
 }
 
 // =============================================================================
@@ -600,9 +643,13 @@ Java_id_jayatech_rootdetector_detector_NativeDetector_nativeScan(JNIEnv* env, jo
     for (auto& s : probe_loaded_libs())
         results.push_back("LOADED_LIB:" + s);
 
-    // --- Symbol probe (injected frameworks export known symbols) ---
+    // --- Symbol probe (injected frameworks export known symbols, incl. Frida gadget) ---
     for (auto& s : probe_root_symbols())
         results.push_back("ROOT_SYMBOL:" + s);
+
+    // --- Frida port 27042 (catches renamed standalone frida-server) ---
+    if (probe_frida_port())
+        results.push_back("FRIDA_PORT:TCP port 27042 (0x69A2) is open — frida-server running (possibly renamed)");
 
     // --- Capability elevation ---
     std::string cap_eff;

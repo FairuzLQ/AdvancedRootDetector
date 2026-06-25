@@ -16,6 +16,7 @@ internal class MountDetector(context: Context) : BaseDetector(context) {
         detectDataAdb(mountLines)?.let { findings += it }
         detectMagiskTmpfs(mountLines)?.let { findings += it }
         detectKsuMounts(mountLines)?.let { findings += it }
+        detectDenyListActive()?.let { findings += it }
         detectMountNamespaceIsolation()?.let { findings += it }
 
         return findings
@@ -152,31 +153,71 @@ internal class MountDetector(context: Context) : BaseDetector(context) {
     }
 
     /**
-     * Mount namespace delta between init and self.
+     * DenyList mount namespace isolation — targeted check.
      *
-     * FALSE POSITIVE prevention:
-     *  - Android 10-14 init typically has 10-20 more mounts than app processes
-     *    due to APEX, per-user namespace isolation, and system services.
-     *  - Only flag if delta is very large (>40) which is consistent with Magisk
-     *    bind-mounting dozens of module overlays and creating its mirror hierarchy.
-     *  - Risk is MEDIUM because it's a heuristic — high delta alone isn't proof.
+     * When Magisk DenyList (or Shamiko) is active for our process:
+     * - Magisk creates a new mount namespace for the app
+     * - It unmounts root-specific paths (/data/adb/magisk, /.magisk, etc.) from our namespace
+     * - These paths are still visible in PID 1's namespace (init)
+     *
+     * This is a kernel-level namespace operation, NOT a libc hook —
+     * so SYS_openat also returns ENOENT. The ONLY reliable detection is
+     * comparing PID 1's mounts against ours for root-exclusive markers.
+     */
+    private fun detectDenyListActive(): RootIndicator? {
+        val initContent = try {
+            java.io.File("/proc/1/mounts").readText()
+        } catch (_: Exception) { return null }
+        val selfContent = try {
+            java.io.File("/proc/self/mounts").readText()
+        } catch (_: Exception) { return null }
+
+        val rootMountMarkers = listOf(
+            "/data/adb/magisk",
+            "/data/adb/ksu",
+            "/data/adb/ksunext",
+            "/data/adb/ap",
+            "/data/adb/modules",
+            "/.magisk",
+            "/sbin/.core"
+        )
+
+        val hiddenFromUs = rootMountMarkers.filter { marker ->
+            initContent.contains(marker) && !selfContent.contains(marker)
+        }
+
+        if (hiddenFromUs.isEmpty()) return null
+
+        return RootIndicator(
+            id = "mount_denylist",
+            category = DetectorCategory.MOUNT,
+            title = "Magisk DenyList Mount Isolation Detected",
+            detail = "Root mount paths visible to PID 1 are hidden from our process — DenyList is actively isolating our mount namespace",
+            risk = RiskLevel.CRITICAL,
+            evidence = hiddenFromUs.map { "In /proc/1/mounts but NOT /proc/self/mounts: $it" }
+        )
+    }
+
+    /**
+     * Fallback count-based delta.
+     * Threshold >10 catches large Magisk module sets; below that is normal APEX/user-ns variance.
      */
     private fun detectMountNamespaceIsolation(): RootIndicator? {
         return try {
             val selfCount = java.io.File("/proc/self/mounts").readLines().size
             val initCount = java.io.File("/proc/1/mounts").readLines().size
             val delta = initCount - selfCount
-            if (delta > 40) {
+            if (delta > 10) {
                 RootIndicator(
                     id = "mount_ns_isolation",
                     category = DetectorCategory.MOUNT,
-                    title = "Large Mount Namespace Delta",
-                    detail = "Init has $initCount mounts vs self $selfCount (delta=$delta) — possible DenyList/hide active",
+                    title = "Mount Namespace Delta (DenyList Heuristic)",
+                    detail = "Init has $initCount mounts vs self $selfCount (delta=$delta) — large gap suggests DenyList or Magisk module isolation",
                     risk = RiskLevel.MEDIUM,
                     evidence = listOf(
                         "init mount count: $initCount",
                         "self mount count: $selfCount",
-                        "delta: $delta (threshold >40)"
+                        "delta: +$delta (threshold >10)"
                     )
                 )
             } else null
