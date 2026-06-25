@@ -43,74 +43,124 @@ internal class IntegrityDetector(context: Context) : BaseDetector(context) {
         private const val ATTESTATION_OID = "1.3.6.1.4.1.11129.2.1.17"
     }
 
+    // Sealed class to distinguish WHY attestation did or didn't produce a result
+    private sealed class AttestResult {
+        object Unsupported   : AttestResult()   // API < 24 or no AndroidKeyStore
+        object GenFailed     : AttestResult()   // exception during keygen — bypass may have blocked it
+        object ExtStripped   : AttestResult()   // cert exists but attestation OID was removed by bypass
+        object ParseFailed   : AttestResult()   // OID present but our ASN.1 parser couldn't read it
+        data class Ok(val info: AttestInfo) : AttestResult()
+    }
+
     override fun detect(): List<RootIndicator> {
         val findings = mutableListOf<RootIndicator>()
 
-        // Read the real system prop — set by the bootloader itself at boot,
-        // very difficult to fake without also hooking property reads in every process.
-        val propBootState = readProp("ro.boot.verifiedbootstate")    // "green" / "orange" / "yellow" / "red"
-        val propSecure    = readProp("ro.secure")                    // "0" on unlocked eng builds
+        // ro.boot.verifiedbootstate is written by the bootloader before Android userspace starts.
+        // It cannot be intercepted by Magisk module hooks (which only run in userspace).
+        val propBoot = readProp("ro.boot.verifiedbootstate")  // "green" / "orange" / "yellow"
+        val isOrange = propBoot == "orange"
 
         val attest = runKeyAttestation()
 
         when {
-            // Case 1: TEE attestation confirms compromise directly
-            attest != null &&
-            attest.securityLevel != SecurityLevel.SOFTWARE &&
-            (!attest.deviceLocked || attest.bootState != BootState.VERIFIED) -> {
-                val secStr  = attest.securityLevel.label
-                val stateStr = attest.bootState.name.lowercase().replaceFirstChar { it.uppercaseChar() }
+            // ── Case 1: TEE/StrongBox directly confirms unlocked bootloader ──────────────
+            attest is AttestResult.Ok &&
+            attest.info.securityLevel != SecurityLevel.SOFTWARE &&
+            (!attest.info.deviceLocked || attest.info.bootState != BootState.VERIFIED) -> {
+                val secStr   = attest.info.securityLevel.label
+                val stateStr = attest.info.bootState.name.lowercase().replaceFirstChar { it.uppercaseChar() }
                 findings += RootIndicator(
                     id       = "integrity_key_attest",
                     category = DetectorCategory.INTEGRITY,
                     title    = "Hardware Attestation: Boot Integrity Compromised",
-                    detail   = "TEE Key Attestation ($secStr) confirms bootloader is unlocked — " +
-                                "cannot be spoofed by Magisk DenyList, Shamiko, or any userspace hook",
+                    detail   = "TEE Key Attestation ($secStr) directly confirms bootloader is unlocked — " +
+                                "this runs in secure hardware, unreachable by Magisk DenyList or any userspace hook",
                     risk     = RiskLevel.HIGH,
                     evidence = listOf(
                         "Attestation source: $secStr",
-                        "deviceLocked: ${attest.deviceLocked}",
+                        "deviceLocked: ${attest.info.deviceLocked}",
                         "verifiedBootState: $stateStr"
                     )
                 )
             }
 
-            // Case 2: PlayIntegrity Fix / USNF bypass detected
-            // Attestation claims locked+verified BUT system prop says bootloader is orange.
-            // These two cannot both be true on a genuine device — one of them is lying.
-            // The prop is set by the bootloader itself; the attestation is being manipulated.
-            attest != null &&
-            attest.securityLevel != SecurityLevel.SOFTWARE &&
-            attest.deviceLocked && attest.bootState == BootState.VERIFIED &&
-            propBootState == "orange" -> {
+            // ── Case 2: Content-faked bypass (PlayIntegrity Fix / USNF) ─────────────────
+            // Attestation returns locked+VERIFIED but prop says orange.
+            // Prop (set by bootloader) and TEE cert cannot legitimately contradict each other.
+            attest is AttestResult.Ok &&
+            attest.info.securityLevel != SecurityLevel.SOFTWARE &&
+            attest.info.deviceLocked && attest.info.bootState == BootState.VERIFIED &&
+            isOrange -> {
                 findings += RootIndicator(
                     id       = "integrity_attest_bypass",
                     category = DetectorCategory.INTEGRITY,
-                    title    = "Key Attestation Bypass Detected",
+                    title    = "Key Attestation Bypass Detected (Content Faked)",
                     detail   = "TEE claims deviceLocked=true/VERIFIED but ro.boot.verifiedbootstate=orange — " +
-                                "a module (PlayIntegrity Fix / USNF) is intercepting Key Attestation at the HAL layer",
+                                "a module is intercepting Key Attestation at the HAL layer and faking the content",
                     risk     = RiskLevel.CRITICAL,
                     evidence = listOf(
-                        "ro.boot.verifiedbootstate: orange (bootloader unlocked — set by bootloader, hard to fake)",
-                        "Key Attestation: deviceLocked=true, verifiedBootState=Verified (contradicts prop → bypass active)",
-                        "Common culprits: PlayIntegrity Fix, Universal SafetyNet Fix, MagiskHide Props Config"
+                        "ro.boot.verifiedbootstate=orange (set by bootloader — reliable)",
+                        "TEE attestation: deviceLocked=true, verifiedBootState=Verified (contradicts prop)",
+                        "Likely: PlayIntegrity Fix, Universal SafetyNet Fix, or MagiskHide Props Config"
                     )
                 )
             }
 
-            // Case 3: Software-backed attestation returned (key attestation bypass via software provider)
-            // We cannot trust the content, but the fact it's software-backed is itself suspicious.
-            attest != null && attest.securityLevel == SecurityLevel.SOFTWARE && propBootState == "orange" -> {
+            // ── Case 3: OID stripped bypass ──────────────────────────────────────────────
+            // KeyPair was generated successfully (bypassed past keygen) but the attestation
+            // extension OID is missing from the leaf cert. On real hardware with a properly
+            // functioning TEE, setAttestationChallenge ALWAYS produces the OID — its absence
+            // means the bypass module removed it after cert generation.
+            attest is AttestResult.ExtStripped && isOrange -> {
+                findings += RootIndicator(
+                    id       = "integrity_attest_stripped",
+                    category = DetectorCategory.INTEGRITY,
+                    title    = "Key Attestation Bypass Detected (OID Stripped)",
+                    detail   = "Key was generated but the attestation certificate has no attestation extension — " +
+                                "a bypass module intercepted the HAL and removed the OID to prevent boot state disclosure",
+                    risk     = RiskLevel.CRITICAL,
+                    evidence = listOf(
+                        "ro.boot.verifiedbootstate=orange (unlocked)",
+                        "KeyPair generation: succeeded",
+                        "Attestation OID (1.3.6.1.4.1.11129.2.1.17): ABSENT from leaf cert",
+                        "Likely: PlayIntegrity Fix aggressive mode or similar module"
+                    )
+                )
+            }
+
+            // ── Case 4: Generation blocked by bypass ─────────────────────────────────────
+            // Some bypass modules throw an exception to abort attestation entirely.
+            // A legitimate device never throws on a standard EC keygen with attestation.
+            attest is AttestResult.GenFailed && isOrange -> {
+                findings += RootIndicator(
+                    id       = "integrity_attest_blocked",
+                    category = DetectorCategory.INTEGRITY,
+                    title    = "Key Attestation Blocked by Module",
+                    detail   = "Key Attestation call threw an exception while bootloader prop shows orange — " +
+                                "a bypass module is actively blocking attestation to hide bootloader state",
+                    risk     = RiskLevel.HIGH,
+                    evidence = listOf(
+                        "ro.boot.verifiedbootstate=orange (unlocked)",
+                        "KeyPair generation with setAttestationChallenge: FAILED (exception)",
+                        "Real hardware never fails this call without a bypass module interfering"
+                    )
+                )
+            }
+
+            // ── Case 5: Software-backed cert returned ────────────────────────────────────
+            // Bypass swapped out the TEE with a software KeyStore provider.
+            attest is AttestResult.Ok &&
+            attest.info.securityLevel == SecurityLevel.SOFTWARE && isOrange -> {
                 findings += RootIndicator(
                     id       = "integrity_sw_attest",
                     category = DetectorCategory.INTEGRITY,
-                    title    = "Software-Backed Attestation (Bypass Active)",
-                    detail   = "Key Attestation returned software-level security (not from TEE) while bootloader prop shows orange — " +
-                                "a bypass module replaced hardware attestation with a software implementation",
+                    title    = "Key Attestation Bypass (Software Provider)",
+                    detail   = "Key Attestation returned software-level security on physical hardware — " +
+                                "a bypass module replaced the TEE provider with a software implementation",
                     risk     = RiskLevel.HIGH,
                     evidence = listOf(
-                        "Attestation security level: Software (should be TEE/StrongBox on real hardware)",
-                        "ro.boot.verifiedbootstate: orange"
+                        "Attestation security level: Software (expected TEE/StrongBox)",
+                        "ro.boot.verifiedbootstate=orange"
                     )
                 )
             }
@@ -119,8 +169,9 @@ internal class IntegrityDetector(context: Context) : BaseDetector(context) {
         return findings
     }
 
-    private fun runKeyAttestation(): AttestInfo? {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return null
+    private fun runKeyAttestation(): AttestResult {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return AttestResult.Unsupported
+        var certGenerated = false
         return try {
             val ks = KeyStore.getInstance("AndroidKeyStore").also { it.load(null) }
             ks.deleteEntry(KEY_ALIAS)
@@ -138,15 +189,22 @@ internal class IntegrityDetector(context: Context) : BaseDetector(context) {
             val chain = ks.getCertificateChain(KEY_ALIAS)
             ks.deleteEntry(KEY_ALIAS)
 
-            if (chain.isNullOrEmpty()) return null
-            val cert = chain[0] as? X509Certificate ?: return null
-            val extDer = cert.getExtensionValue(ATTESTATION_OID) ?: return null
-            parseAttestationExt(extDer)
+            if (chain.isNullOrEmpty()) return AttestResult.GenFailed
+            val cert = chain[0] as? X509Certificate ?: return AttestResult.GenFailed
+            certGenerated = true
+
+            // If cert exists but attestation OID is absent → bypass stripped it
+            val extDer = cert.getExtensionValue(ATTESTATION_OID)
+                ?: return AttestResult.ExtStripped
+
+            val info = parseAttestationExt(extDer) ?: return AttestResult.ParseFailed
+            AttestResult.Ok(info)
         } catch (_: Exception) {
             runCatching {
                 KeyStore.getInstance("AndroidKeyStore").also { it.load(null) }.deleteEntry(KEY_ALIAS)
             }
-            null
+            // If cert generation itself threw → bypass blocked us
+            if (!certGenerated) AttestResult.GenFailed else AttestResult.ExtStripped
         }
     }
 
