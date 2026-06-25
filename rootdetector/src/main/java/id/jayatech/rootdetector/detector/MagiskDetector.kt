@@ -228,22 +228,17 @@ internal class MagiskDetector(context: Context) : BaseDetector(context) {
             if (apkPath.isEmpty() || pkgName.isEmpty()) continue
 
             val apkFile = java.io.File(apkPath)
-            if (!apkFile.exists() || apkFile.length() > 40_000_000L) continue
+            if (!apkFile.exists()) continue
 
             try {
                 java.util.zip.ZipFile(apkPath).use { zip ->
                     for (dexName in listOf("classes.dex", "classes2.dex")) {
                         val entry = zip.getEntry(dexName) ?: continue
-                        if (entry.size > 25_000_000L) continue
-                        val bytes = zip.getInputStream(entry).readBytes()
-                        val raw = String(bytes, Charsets.ISO_8859_1)
-                        for (sig in magiskSigs) {
-                            if (raw.contains(sig)) {
-                                evidence += "$pkgName → '$sig' in $dexName"
-                                break
-                            }
+                        // Stream in 64KB chunks — never load full DEX into RAM
+                        if (streamContainsSig(zip.getInputStream(entry), magiskSigs)) {
+                            evidence += "$pkgName → Magisk signature in $dexName"
+                            break
                         }
-                        if (evidence.any { it.startsWith(pkgName) }) break
                     }
                 }
             } catch (_: Exception) {}
@@ -257,6 +252,33 @@ internal class MagiskDetector(context: Context) : BaseDetector(context) {
             risk = RiskLevel.CRITICAL,
             evidence = evidence
         ) else null
+    }
+
+    // Streaming string search — reads at most 128KB at a time regardless of file size.
+    // Overlap ensures matches spanning chunk boundaries are not missed.
+    private fun streamContainsSig(stream: java.io.InputStream, sigs: List<String>): Boolean {
+        val chunkSize = 65536
+        val maxSigLen = sigs.maxOf { it.length }
+        val overlap = maxSigLen - 1
+        val buf = ByteArray(chunkSize + overlap)
+        var prevLen = 0
+        return try {
+            stream.use {
+                while (true) {
+                    val read = it.read(buf, prevLen, chunkSize)
+                    if (read <= 0) break
+                    val total = prevLen + read
+                    val window = String(buf, 0, total, Charsets.ISO_8859_1)
+                    for (sig in sigs) {
+                        if (window.contains(sig)) return true
+                    }
+                    val newPrev = minOf(overlap, total)
+                    System.arraycopy(buf, total - newPrev, buf, 0, newPrev)
+                    prevLen = newPrev
+                }
+            }
+            false
+        } catch (_: Exception) { false }
     }
 
     private fun detectPackagesViaShell(): RootIndicator? {
