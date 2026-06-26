@@ -708,7 +708,7 @@ static std::vector<std::string> scan_proc_for_root_daemons() {
 
         if (found_this_pid) continue;
 
-        // 2. /proc/<pid>/cmdline — full argv[0] (catches paths like /sbin/magisk --daemon)
+        // 2. /proc/<pid>/cmdline — full argv[0]
         snprintf(path, sizeof(path), "/proc/%s/cmdline", pid);
         char cmdline[256] = {};
         fd = open(path, O_RDONLY);
@@ -725,11 +725,69 @@ static std::vector<std::string> scan_proc_for_root_daemons() {
                     lower.find("/magisk64") != std::string::npos ||
                     lower.find("/magisk32") != std::string::npos) {
                     hits.push_back("PID " + std::string(pid) + ": " + cmd.substr(0, 60));
+                    found_this_pid = true;
                 }
+            }
+        }
+
+        if (found_this_pid) continue;
+
+        // 3. /proc/<pid>/exe — kernel resolves this symlink in ROOT mount namespace,
+        // NOT our DenyList-isolated namespace. Even if /sbin is unmounted from our
+        // namespace, readlink here still returns the original path like /sbin/magisk64.
+        // Also catches processes that renamed comm/cmdline to evade detection.
+        snprintf(path, sizeof(path), "/proc/%s/exe", pid);
+        char exe[256] = {};
+        ssize_t elen = readlink(path, exe, sizeof(exe) - 1);
+        if (elen > 0) {
+            std::string exe_str(exe, elen);
+            std::string lower = exe_str;
+            for (char& c : lower) c = (char)tolower((unsigned char)c);
+            if (lower.find("magisk") != std::string::npos ||
+                lower.find("kitsune") != std::string::npos ||
+                lower.find("ksud") != std::string::npos ||
+                lower.find("apd") != std::string::npos) {
+                hits.push_back("exe=" + exe_str + " (PID " + std::string(pid) + ")");
             }
         }
     }
     closedir(dir);
+    return hits;
+}
+
+// =============================================================================
+// Environment variable scan — check /proc/self/environ for root-set vars.
+// Zygisk/Magisk might leave traces in env before DenyList cleanup.
+// =============================================================================
+static std::vector<std::string> scan_environ_for_root() {
+    std::vector<std::string> hits;
+    int fd = open("/proc/self/environ", O_RDONLY);
+    if (fd < 0) return hits;
+    char buf[8192] = {};
+    ssize_t n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return hits;
+
+    static const char* kEnvKeywords[] = {
+        "MAGISK", "ZYGISK", "KITSUNE", "KSU", "APATCH", nullptr
+    };
+    size_t i = 0;
+    while (i < (size_t)n) {
+        const char* entry = buf + i;
+        size_t len = strnlen(entry, (size_t)n - i);
+        if (len > 0) {
+            std::string s(entry, len);
+            std::string upper = s;
+            for (char& c : upper) c = (char)toupper((unsigned char)c);
+            for (int k = 0; kEnvKeywords[k]; k++) {
+                if (upper.find(kEnvKeywords[k]) != std::string::npos) {
+                    hits.push_back(s);
+                    break;
+                }
+            }
+        }
+        i += len + 1;
+    }
     return hits;
 }
 
@@ -784,6 +842,10 @@ Java_id_jayatech_rootdetector_detector_NativeDetector_nativeScan(JNIEnv* env, jo
     // magiskd/ksud/apd remain visible in /proc regardless of DenyList or Shamiko.
     for (auto& s : scan_proc_for_root_daemons())
         results.push_back("ROOT_PROC:" + s);
+
+    // --- Environment variable scan ---
+    for (auto& s : scan_environ_for_root())
+        results.push_back("ROOT_ENV:" + s);
 
     // --- Kernel version strings — kernel-owned, zero userspace spoofability ---
     for (auto& s : check_kernel_version_strings())

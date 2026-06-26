@@ -105,6 +105,11 @@ internal class MagiskDetector(context: Context) : BaseDetector(context) {
         //    contains Magisk class path strings. Scan via ZipFile directly on APK files.
         detectRenamedMagiskApk()?.let { findings += it }
 
+        // 9. ps subprocess — alternative to native proc scan.
+        //    Shell subprocess is NOT Zygote-spawned → no Zygisk injection.
+        //    Also reads /proc/<pid>/exe via `ps -o pid,comm,args` format.
+        detectRootDaemonsViaPs()?.let { findings += it }
+
         return findings
     }
 
@@ -270,6 +275,24 @@ internal class MagiskDetector(context: Context) : BaseDetector(context) {
             detail = "User APK contains Magisk class references — package hidden via 'Hide Magisk' feature",
             risk = RiskLevel.CRITICAL,
             evidence = evidence
+        ) else null
+    }
+
+    private fun detectRootDaemonsViaPs(): RootIndicator? {
+        // ps subprocess: not Zygote-spawned → no Zygisk hooks, reads real process table
+        val output = runShellCommand("ps -ef 2>/dev/null || ps -A 2>/dev/null")
+        if (output.isBlank()) return null
+        val keywords = listOf("magiskd", "magisk64", "magisk32", "ksud", "apd ", "kpatch")
+        val found = output.lines()
+            .filter { line -> keywords.any { line.contains(it, ignoreCase = true) } }
+            .take(5)
+        return if (found.isNotEmpty()) RootIndicator(
+            id = "magisk_proc_ps",
+            category = DetectorCategory.MAGISK,
+            title = "Root Daemon in Process List",
+            detail = "Root daemon found via `ps` subprocess — not affected by Zygisk in-process hooks",
+            risk = RiskLevel.CRITICAL,
+            evidence = found
         ) else null
     }
 

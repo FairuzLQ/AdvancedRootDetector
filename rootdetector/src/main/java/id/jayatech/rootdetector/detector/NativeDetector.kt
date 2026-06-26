@@ -269,8 +269,20 @@ internal class NativeDetector(context: Context) : BaseDetector(context) {
                 id = "native_root_proc",
                 category = DetectorCategory.NATIVE,
                 title = "[Native] Root Daemon Process Running",
-                detail = "Root daemon (magiskd/ksud/apd) found in /proc process table — DenyList cannot hide processes",
+                detail = "Root daemon found in /proc (comm/cmdline/exe) — DenyList cannot hide processes",
                 risk = RiskLevel.CRITICAL,
+                evidence = it
+            )
+        }
+
+        // Root-related env var left in our process by Zygisk/Magisk before DenyList cleanup
+        byPrefix["ROOT_ENV"]?.takeIf { it.isNotEmpty() }?.let {
+            findings += RootIndicator(
+                id = "native_root_env",
+                category = DetectorCategory.NATIVE,
+                title = "[Native] Root Env Variable Found",
+                detail = "Root-related environment variable in /proc/self/environ — set by Magisk/Zygisk at injection",
+                risk = RiskLevel.HIGH,
                 evidence = it
             )
         }

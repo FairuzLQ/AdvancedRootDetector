@@ -141,9 +141,24 @@ internal class PropsDetector(context: Context) : BaseDetector(context) {
             if (v.isNotEmpty()) evidence += "$key=$v"
         }
 
-        // Broad grep via subprocess — catches any root-related props
-        val grepOut = runShellCommand("getprop | grep -iE 'magisk|zygisk|kitsune|apatch'")
+        // Broad grep via subprocess (not Zygote-spawned → no Zygisk hooks on getprop)
+        val grepOut = runShellCommand(
+            "getprop | grep -iE 'magisk|zygisk|kitsune|apatch|ksu|supersu'"
+        )
         grepOut.lines().filter { it.isNotBlank() }.take(6).forEach { evidence += it.trim() }
+
+        // Fallback: check specific known Magisk/Kitsune props by name
+        val extraProps = listOf(
+            "ro.magisk.version", "persist.sys.zygisk",
+            "ro.magisk.kitsune", "persist.magisk.version",
+            "ro.build.selinux", "ro.debuggable"
+        )
+        for (key in extraProps) {
+            val v = readProp(key)
+            if (v.isNotEmpty() && !evidence.any { it.startsWith(key) }) {
+                evidence += "$key=$v"
+            }
+        }
 
         return if (evidence.isNotEmpty()) RootIndicator(
             id = "props_root_runtime",
