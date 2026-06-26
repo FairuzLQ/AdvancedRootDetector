@@ -214,34 +214,32 @@ internal class MagiskDetector(context: Context) : BaseDetector(context) {
      * and search the DEX for Magisk-specific strings in the string pool.
      */
     private fun detectRenamedMagiskApk(): RootIndicator? {
-        val pmOutput = try {
-            val p = Runtime.getRuntime().exec(arrayOf("pm", "list", "packages", "-3", "-f"))
-            p.inputStream.bufferedReader().readText()
-        } catch (_: Exception) { return null }
+        // 5-second timeout on pm — it can be slow on Android 8 / low-end devices
+        val pmOutput = runShellCommand("pm list packages -3 -f 2>/dev/null", timeoutMs = 5000)
         if (pmOutput.isBlank()) return null
 
-        // Magisk stub DEX signatures — two tiers:
-        // Tier 1 (slash DEX descriptors): only present when APK actually CONTAINS these classes
-        // Tier 2 (specific dot strings): Magisk stub uses reflection to load internals;
-        //   the specific sub-package paths below (.core.su, .core.app, StubApk) are
-        //   Magisk-internal and NOT referenced by RASP detection libraries
-        //   (RASP only checks the top-level package "com.topjohnwu.magisk" for PM calls)
         val magiskSigs = listOf(
-            // Tier 1 — DEX class descriptors (slash format)
             "Lcom/topjohnwu/magisk/",
             "Lio/github/huskydg/magisk/",
             "Lio/github/vvb2060/magisk/",
-            // Tier 2 — Internal Magisk class references via reflection (dot format, specific)
-            "topjohnwu.magisk.core.su",   // SU module — RASP only checks top package
-            "topjohnwu.magisk.core.app",  // App init — not in RASP
-            "huskydg.magisk.core",        // Kitsune internal package
-            "StubApk",                    // Magisk stub bootstrap class name
-            "MagiskdService",             // Magisk daemon service class
+            "topjohnwu.magisk.core.su",
+            "topjohnwu.magisk.core.app",
+            "huskydg.magisk.core",
+            "StubApk",
+            "MagiskdService",
         )
         val selfPkg = context.packageName
         val evidence = mutableListOf<String>()
 
+        // Hard limit: scan at most 25 APKs. Magisk stub is typically the only anomalous APK;
+        // scanning 100+ APKs on a Redmi 5 takes 30+ seconds.
+        var scanned = 0
+        val MAX_APK_SCAN = 25
+        // Skip APKs larger than 12 MB — Magisk stub is tiny (<2 MB); large APKs are real apps.
+        val MAX_APK_SIZE = 12L * 1024 * 1024
+
         for (line in pmOutput.lines()) {
+            if (scanned >= MAX_APK_SCAN) break
             if (!line.startsWith("package:")) continue
             val rest = line.removePrefix("package:")
             val eqIdx = rest.lastIndexOf('=')
@@ -249,16 +247,16 @@ internal class MagiskDetector(context: Context) : BaseDetector(context) {
             val apkPath = rest.substring(0, eqIdx).trim()
             val pkgName = rest.substring(eqIdx + 1).trim()
             if (apkPath.isEmpty() || pkgName.isEmpty()) continue
-            if (pkgName == selfPkg) continue // never flag ourselves
+            if (pkgName == selfPkg) continue
 
             val apkFile = java.io.File(apkPath)
-            if (!apkFile.exists()) continue
+            if (!apkFile.exists() || apkFile.length() > MAX_APK_SIZE) continue
+            scanned++
 
             try {
                 java.util.zip.ZipFile(apkPath).use { zip ->
                     for (dexName in listOf("classes.dex", "classes2.dex")) {
                         val entry = zip.getEntry(dexName) ?: continue
-                        // Stream in 64KB chunks — never load full DEX into RAM
                         if (streamContainsSig(zip.getInputStream(entry), magiskSigs)) {
                             evidence += "$pkgName → Magisk signature in $dexName"
                             break
@@ -279,10 +277,14 @@ internal class MagiskDetector(context: Context) : BaseDetector(context) {
     }
 
     private fun detectRootDaemonsViaPs(): RootIndicator? {
-        // ps subprocess: not Zygote-spawned → no Zygisk hooks, reads real process table
-        val output = runShellCommand("ps -ef 2>/dev/null || ps -A 2>/dev/null")
+        // Lighter ps output (NAME only, not full -ef) — faster on slow devices.
+        // 3-second timeout in case ps is slow on Android 8.
+        val output = runShellCommand(
+            "ps -A -o PID,NAME 2>/dev/null || ps -o pid,comm 2>/dev/null",
+            timeoutMs = 3000
+        )
         if (output.isBlank()) return null
-        val keywords = listOf("magiskd", "magisk64", "magisk32", "ksud", "apd ", "kpatch")
+        val keywords = listOf("magiskd", "magisk64", "magisk32", "ksud", "apd", "kpatch")
         val found = output.lines()
             .filter { line -> keywords.any { line.contains(it, ignoreCase = true) } }
             .take(5)
@@ -324,10 +326,7 @@ internal class MagiskDetector(context: Context) : BaseDetector(context) {
     }
 
     private fun detectPackagesViaShell(): RootIndicator? {
-        val output = try {
-            val p = Runtime.getRuntime().exec(arrayOf("pm", "list", "packages"))
-            p.inputStream.bufferedReader().readText()
-        } catch (_: Exception) { return null }
+        val output = runShellCommand("pm list packages 2>/dev/null", timeoutMs = 4000)
         if (output.isBlank()) return null
 
         val targets = listOf(

@@ -136,28 +136,18 @@ internal class PropsDetector(context: Context) : BaseDetector(context) {
         )
         val evidence = mutableListOf<String>()
 
+        // One subprocess dumps all props — parse directly instead of N getprop calls.
+        // getprop piped to grep is fast; 3 s timeout is generous for old devices.
+        val grepOut = runShellCommand(
+            "getprop | grep -iE 'magisk|zygisk|kitsune|apatch|ksu|supersu'",
+            timeoutMs = 3000
+        )
+        grepOut.lines().filter { it.isNotBlank() }.take(8).forEach { evidence += it.trim() }
+
+        // Also check specific keys in case grep fails or prop has unusual format
         for (key in directProps) {
             val v = readProp(key)
-            if (v.isNotEmpty()) evidence += "$key=$v"
-        }
-
-        // Broad grep via subprocess (not Zygote-spawned → no Zygisk hooks on getprop)
-        val grepOut = runShellCommand(
-            "getprop | grep -iE 'magisk|zygisk|kitsune|apatch|ksu|supersu'"
-        )
-        grepOut.lines().filter { it.isNotBlank() }.take(6).forEach { evidence += it.trim() }
-
-        // Fallback: check specific known Magisk/Kitsune props by name
-        val extraProps = listOf(
-            "ro.magisk.version", "persist.sys.zygisk",
-            "ro.magisk.kitsune", "persist.magisk.version",
-            "ro.build.selinux", "ro.debuggable"
-        )
-        for (key in extraProps) {
-            val v = readProp(key)
-            if (v.isNotEmpty() && !evidence.any { it.startsWith(key) }) {
-                evidence += "$key=$v"
-            }
+            if (v.isNotEmpty() && !evidence.any { it.contains(key) }) evidence += "$key=$v"
         }
 
         return if (evidence.isNotEmpty()) RootIndicator(
