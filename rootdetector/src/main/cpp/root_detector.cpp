@@ -22,6 +22,8 @@
 #include <setjmp.h>
 #include <link.h>      // dl_iterate_phdr
 #include <pthread.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 
 #define TAG "RDNative"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
@@ -756,6 +758,144 @@ static std::vector<std::string> scan_proc_for_root_daemons() {
 }
 
 // =============================================================================
+// Unknown UID=0 process scan.
+//
+// Every legitimate root process is known (init, kthreadd, vold, etc.).
+// magiskd or any renamed root daemon will NOT be in the system whitelist.
+// We read /proc/<pid>/status for Uid field and cross-check against the whitelist.
+// Even if comm/cmdline/exe are obfuscated, we can still detect "unknown UID-0 process".
+// =============================================================================
+static std::vector<std::string> find_unknown_root_processes() {
+    std::vector<std::string> hits;
+
+    // Known legitimate UID-0 process name prefixes on AOSP/Qualcomm/MediaTek devices.
+    // A process NOT matching any of these prefix is suspicious.
+    static const char* kKnown[] = {
+        "init", "kthreadd", "kswapd", "migration", "watchdog", "kworker",
+        "ksoftirqd", "kcompactd", "rcu_", "netns", "khungtaskd", "oom_reaper",
+        "writeback", "kdevtmpfs", "kblockd", "bioset", "kcopyd", "deferwq",
+        "vmstat", "jbd2", "ext4-", "f2fs_", "zygote", "zygote64",
+        "surfaceflinger", "system_server", "logd", "logcat",
+        "vold", "netd", "adbd", "lmkd", "ueventd", "servicemanager",
+        "hwservicemanager", "vndservicemanager", "audioserver", "mediaserver",
+        "cameraserver", "drmserver", "wificond", "installd", "sdcard",
+        "keystore", "gatekeeperd", "fingerprintd", "healthd", "thermal",
+        "debuggerd", "tombstoned", "incidentd", "mdnsd", "rild",
+        "dumpstate", "perfprofd", "storaged", "statsd",
+        "ipv6proxy", "netmgrd", "qmuxd", "qti", "diag", "ims", "mcDriverDaemon",
+        "ps", "ls", "sh", "cat", "grep", "getprop",  // transient shell commands
+        nullptr
+    };
+
+    DIR* dir = opendir("/proc");
+    if (!dir) return hits;
+
+    struct dirent* ent;
+    int checked = 0;
+    while ((ent = readdir(dir)) != nullptr && checked < 512) {
+        if (!isdigit((unsigned char)ent->d_name[0])) continue;
+        const char* pid = ent->d_name;
+        checked++;
+
+        char path[64];
+        snprintf(path, sizeof(path), "/proc/%s/status", pid);
+        int fd = open(path, O_RDONLY);
+        if (fd < 0) continue;
+
+        char buf[2048] = {};
+        ssize_t n = read(fd, buf, sizeof(buf) - 1);
+        close(fd);
+        if (n <= 0) continue;
+
+        // Parse "Uid:\t<real>\t..." — real UID is first value
+        char* uid_p = strstr(buf, "\nUid:");
+        if (!uid_p) uid_p = strstr(buf, "Uid:");
+        if (!uid_p) continue;
+        uid_p += 4; // skip "Uid:"
+        while (*uid_p == '\t' || *uid_p == ' ') uid_p++;
+        if (atoi(uid_p) != 0) continue; // not root
+
+        // Parse "Name:\t..." field
+        char comm[32] = {};
+        char* name_p = strstr(buf, "Name:");
+        if (name_p) {
+            name_p += 5;
+            while (*name_p == '\t' || *name_p == ' ') name_p++;
+            int i = 0;
+            while (name_p[i] && name_p[i] != '\n' && i < 31) {
+                comm[i] = name_p[i]; i++;
+            }
+            comm[i] = 0;
+        }
+
+        if (comm[0] == '\0') {
+            hits.push_back("UID0 PID=" + std::string(pid) + " (Name unreadable — suspicious)");
+            continue;
+        }
+
+        bool known = false;
+        for (int k = 0; kKnown[k]; k++) {
+            if (strncmp(comm, kKnown[k], strlen(kKnown[k])) == 0) {
+                known = true;
+                break;
+            }
+        }
+
+        if (!known) {
+            // Also check if it looks like a kernel thread [brackets]
+            if (comm[0] == '[') known = true;
+        }
+
+        if (!known) {
+            hits.push_back("Unknown UID0 process: " + std::string(comm) +
+                           " (PID " + std::string(pid) + ")");
+        }
+    }
+    closedir(dir);
+    return hits;
+}
+
+// =============================================================================
+// Magisk daemon abstract socket probe.
+//
+// Magisk daemon listens on an abstract Unix socket. Old versions used known names
+// (@magisk_daemon, @/dev/socket/magisk_daemon). Even with randomized names,
+// trying these historical names might catch un-patched or older installs.
+// A successful connect (not ECONNREFUSED) means the socket exists.
+// =============================================================================
+static std::string probe_magisk_socket() {
+    static const char* kSockets[] = {
+        "magisk_daemon",
+        "MAGISKTMP",
+        nullptr
+    };
+
+    for (int k = 0; kSockets[k]; k++) {
+        int sock = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (sock < 0) continue;
+
+        struct sockaddr_un addr = {};
+        addr.sun_family = AF_UNIX;
+        // abstract socket: sun_path[0] = '\0', rest is the name
+        const char* name = kSockets[k];
+        size_t namelen = strlen(name);
+        memcpy(addr.sun_path + 1, name, namelen);
+        socklen_t addrlen = (socklen_t)(offsetof(struct sockaddr_un, sun_path) + 1 + namelen);
+
+        int ret = connect(sock, (const struct sockaddr*)&addr, addrlen);
+        int err = errno;
+        close(sock);
+
+        // ENOENT / ECONNREFUSED → socket doesn't exist
+        // Anything else (including success, EAGAIN, EPERM) → socket IS there
+        if (ret == 0 || (err != ENOENT && err != ECONNREFUSED)) {
+            return std::string("@") + name + " (err=" + std::to_string(err) + ")";
+        }
+    }
+    return "";
+}
+
+// =============================================================================
 // Environment variable scan — check /proc/self/environ for root-set vars.
 // Zygisk/Magisk might leave traces in env before DenyList cleanup.
 // =============================================================================
@@ -842,6 +982,17 @@ Java_id_jayatech_rootdetector_detector_NativeDetector_nativeScan(JNIEnv* env, jo
     // magiskd/ksud/apd remain visible in /proc regardless of DenyList or Shamiko.
     for (auto& s : scan_proc_for_root_daemons())
         results.push_back("ROOT_PROC:" + s);
+
+    // --- Unknown UID=0 process scan (catches renamed/obfuscated root daemons) ---
+    for (auto& s : find_unknown_root_processes())
+        results.push_back("ROOT_UID0:" + s);
+
+    // --- Magisk daemon abstract socket probe ---
+    {
+        auto sock_hit = probe_magisk_socket();
+        if (!sock_hit.empty())
+            results.push_back("MAGISK_SOCK:" + sock_hit);
+    }
 
     // --- Environment variable scan ---
     for (auto& s : scan_environ_for_root())

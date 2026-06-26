@@ -106,9 +106,12 @@ internal class MagiskDetector(context: Context) : BaseDetector(context) {
         detectRenamedMagiskApk()?.let { findings += it }
 
         // 9. ps subprocess — alternative to native proc scan.
-        //    Shell subprocess is NOT Zygote-spawned → no Zygisk injection.
-        //    Also reads /proc/<pid>/exe via `ps -o pid,comm,args` format.
         detectRootDaemonsViaPs()?.let { findings += it }
+
+        // 10. Shell exe scan — /proc/<pid>/exe is a kernel symlink resolved in root namespace.
+        //     Even if /sbin is unmounted from our DenyList namespace, the exe symlink for a
+        //     running magisk64 still points to "/sbin/magisk64" as seen by the kernel.
+        detectRootProcessViaExeScan()?.let { findings += it }
 
         return findings
     }
@@ -214,51 +217,58 @@ internal class MagiskDetector(context: Context) : BaseDetector(context) {
      * and search the DEX for Magisk-specific strings in the string pool.
      */
     private fun detectRenamedMagiskApk(): RootIndicator? {
-        // 5-second timeout on pm — it can be slow on Android 8 / low-end devices
         val pmOutput = runShellCommand("pm list packages -3 -f 2>/dev/null", timeoutMs = 5000)
         if (pmOutput.isBlank()) return null
 
         val magiskSigs = listOf(
+            // Tier 1 — DEX class descriptors (slash format, only in APK that CONTAINS the class)
             "Lcom/topjohnwu/magisk/",
             "Lio/github/huskydg/magisk/",
             "Lio/github/vvb2060/magisk/",
+            // Tier 2 — Magisk-internal strings (RASP libs only have top-level package)
             "topjohnwu.magisk.core.su",
             "topjohnwu.magisk.core.app",
             "huskydg.magisk.core",
             "StubApk",
             "MagiskdService",
+            // Tier 3 — Stub loader paths (appear in the loader code that bootstraps main APK)
+            "/data/adb/magisk.apk",       // path Magisk/Kitsune stub uses to load main APK
+            "MAGISKTMP",                  // internal env var name set by Magisk init
         )
         val selfPkg = context.packageName
         val evidence = mutableListOf<String>()
 
-        // Hard limit: scan at most 25 APKs. Magisk stub is typically the only anomalous APK;
-        // scanning 100+ APKs on a Redmi 5 takes 30+ seconds.
-        var scanned = 0
-        val MAX_APK_SCAN = 25
-        // Skip APKs larger than 12 MB — Magisk stub is tiny (<2 MB); large APKs are real apps.
-        val MAX_APK_SIZE = 12L * 1024 * 1024
+        // Parse all lines first, then sort by APK size ascending.
+        // Magisk stub is always tiny (<2 MB); real apps are 5-100 MB.
+        // Sorting ensures the stub is scanned FIRST even if 100+ apps are installed.
+        data class Entry(val apkPath: String, val pkgName: String, val size: Long)
 
-        for (line in pmOutput.lines()) {
-            if (scanned >= MAX_APK_SCAN) break
-            if (!line.startsWith("package:")) continue
-            val rest = line.removePrefix("package:")
-            val eqIdx = rest.lastIndexOf('=')
-            if (eqIdx < 0) continue
-            val apkPath = rest.substring(0, eqIdx).trim()
-            val pkgName = rest.substring(eqIdx + 1).trim()
-            if (apkPath.isEmpty() || pkgName.isEmpty()) continue
-            if (pkgName == selfPkg) continue
+        val MAX_APK_SIZE = 5L * 1024 * 1024  // stub is <2 MB; skip anything larger
+        val entries = pmOutput.lines()
+            .filter { it.startsWith("package:") }
+            .mapNotNull { line ->
+                val rest = line.removePrefix("package:")
+                val eqIdx = rest.lastIndexOf('=')
+                if (eqIdx < 0) return@mapNotNull null
+                val apkPath = rest.substring(0, eqIdx).trim()
+                val pkgName = rest.substring(eqIdx + 1).trim()
+                if (apkPath.isEmpty() || pkgName.isEmpty() || pkgName == selfPkg) return@mapNotNull null
+                val f = java.io.File(apkPath)
+                if (!f.exists()) return@mapNotNull null
+                val sz = f.length()
+                if (sz > MAX_APK_SIZE) return@mapNotNull null
+                Entry(apkPath, pkgName, sz)
+            }
+            .sortedBy { it.size }
+            .take(50)  // at most 50 small APKs — stub is almost always in first 5
 
-            val apkFile = java.io.File(apkPath)
-            if (!apkFile.exists() || apkFile.length() > MAX_APK_SIZE) continue
-            scanned++
-
+        for (e in entries) {
             try {
-                java.util.zip.ZipFile(apkPath).use { zip ->
+                java.util.zip.ZipFile(e.apkPath).use { zip ->
                     for (dexName in listOf("classes.dex", "classes2.dex")) {
                         val entry = zip.getEntry(dexName) ?: continue
                         if (streamContainsSig(zip.getInputStream(entry), magiskSigs)) {
-                            evidence += "$pkgName → Magisk signature in $dexName"
+                            evidence += "${e.pkgName} → Magisk signature in $dexName"
                             break
                         }
                     }
@@ -293,6 +303,26 @@ internal class MagiskDetector(context: Context) : BaseDetector(context) {
             category = DetectorCategory.MAGISK,
             title = "Root Daemon in Process List",
             detail = "Root daemon found via `ps` subprocess — not affected by Zygisk in-process hooks",
+            risk = RiskLevel.CRITICAL,
+            evidence = found
+        ) else null
+    }
+
+    private fun detectRootProcessViaExeScan(): RootIndicator? {
+        // ls -la /proc/*/exe resolves symlinks in KERNEL mount namespace.
+        // Even with DenyList hiding /sbin from our namespace, the exe symlink
+        // for /sbin/magisk64 still shows /sbin/magisk64 via kernel's view.
+        val output = runShellCommand(
+            "ls -la /proc/*/exe 2>/dev/null | grep -iE 'magisk|ksud|apd|kitsune'",
+            timeoutMs = 3000
+        )
+        if (output.isBlank()) return null
+        val found = output.lines().filter { it.isNotBlank() }.take(5)
+        return if (found.isNotEmpty()) RootIndicator(
+            id = "magisk_exe_proc",
+            category = DetectorCategory.MAGISK,
+            title = "Root Binary Found via /proc/exe",
+            detail = "/proc/<pid>/exe reveals root binary path — kernel-resolved, DenyList cannot hide",
             risk = RiskLevel.CRITICAL,
             evidence = found
         ) else null

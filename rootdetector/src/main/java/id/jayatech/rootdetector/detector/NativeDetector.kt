@@ -262,6 +262,30 @@ internal class NativeDetector(context: Context) : BaseDetector(context) {
             )
         }
 
+        // Unknown UID=0 process — catches renamed magiskd even when comm is obfuscated.
+        byPrefix["ROOT_UID0"]?.takeIf { it.isNotEmpty() }?.let {
+            findings += RootIndicator(
+                id = "native_uid0_proc",
+                category = DetectorCategory.NATIVE,
+                title = "[Native] Unknown Root Process Running",
+                detail = "UID=0 process not in known system whitelist — likely renamed root daemon",
+                risk = RiskLevel.CRITICAL,
+                evidence = it.take(8)
+            )
+        }
+
+        // Magisk daemon abstract socket probe
+        byPrefix["MAGISK_SOCK"]?.takeIf { it.isNotEmpty() }?.let {
+            findings += RootIndicator(
+                id = "native_magisk_socket",
+                category = DetectorCategory.NATIVE,
+                title = "[Native] Magisk Daemon Socket Found",
+                detail = "Magisk daemon abstract socket responded — daemon is running",
+                risk = RiskLevel.CRITICAL,
+                evidence = it
+            )
+        }
+
         // Root daemon process in /proc — DenyList is mount namespace isolation only.
         // It cannot hide processes. magiskd/ksud/apd appear in /proc regardless.
         byPrefix["ROOT_PROC"]?.takeIf { it.isNotEmpty() }?.let {
