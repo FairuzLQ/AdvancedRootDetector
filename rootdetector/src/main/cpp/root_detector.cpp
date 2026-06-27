@@ -918,6 +918,89 @@ static std::vector<std::string> scan_environ_for_root() {
 }
 
 // =============================================================================
+// Emulator detection via direct syscalls + bionic property API
+//
+// Java-layer EmulatorDetector reads Build.* and calls File.exists() —
+// both are trivially hookable by Frida (Java.use("android.os.Build").HARDWARE
+// and File.exists.implementation override). This native version bypasses those:
+//
+//   - file_exists_syscall() uses __NR_newfstatat directly → Frida's stat64 hook
+//     (attached via Module.findExportByName("libc.so","stat64")) has no effect.
+//   - __system_property_get() reads from /dev/__properties__ shared memory,
+//     not through the subprocess route that Java Runtime.exec intercepts.
+//   - /proc/cpuinfo read via SYS_openat → bypasses Java FileInputStream hook.
+// =============================================================================
+
+// bionic exposes this; not in the NDK headers but always available at link time.
+extern "C" int __system_property_get(const char* name, char* value);
+
+static std::vector<std::string> detect_emulator_native() {
+    std::vector<std::string> hits;
+
+    // --- /dev device nodes — direct fstatat syscall, not libc stat() ---
+    static const char* kEmuDevs[] = {
+        "/dev/goldfish_pipe",   // Goldfish/Ranchu primary communication pipe (AVD)
+        "/dev/goldfish_sync",   // Goldfish sync driver (AVD)
+        "/dev/qemu_pipe",       // Older QEMU pipe (still present in many AVDs)
+        "/dev/socket/qemud",    // QEMU daemon socket
+        "/dev/vboxguest",       // VirtualBox guest additions (Genymotion)
+        "/dev/vboxuser",        // VirtualBox user-mode interface
+        nullptr
+    };
+    for (int i = 0; kEmuDevs[i]; i++) {
+        if (file_exists_syscall(kEmuDevs[i]))
+            hits.push_back(std::string("dev:") + kEmuDevs[i]);
+    }
+
+    // --- ro.hardware + ro.kernel.qemu via bionic system property API ---
+    // Not intercepted by Java Runtime.exec() hook; separate function pointer.
+    char prop[96] = {};
+    if (__system_property_get("ro.hardware", prop) > 0) {
+        std::string hw = str_lower(std::string(prop));
+        if (hw == "goldfish" || hw == "ranchu" || hw.substr(0, 4) == "vbox")
+            hits.push_back(std::string("ro.hardware=") + prop);
+    }
+    memset(prop, 0, sizeof(prop));
+    if (__system_property_get("ro.kernel.qemu", prop) > 0 && strcmp(prop, "1") == 0)
+        hits.push_back("ro.kernel.qemu=1");
+
+    memset(prop, 0, sizeof(prop));
+    if (__system_property_get("ro.product.model", prop) > 0) {
+        std::string model = str_lower(std::string(prop));
+        if (model.find("android sdk built for") != std::string::npos ||
+            model == "emulator" || model == "google_sdk")
+            hits.push_back(std::string("ro.product.model=") + prop);
+    }
+
+    memset(prop, 0, sizeof(prop));
+    if (__system_property_get("ro.build.characteristics", prop) > 0) {
+        if (strstr(prop, "emulator"))
+            hits.push_back(std::string("ro.build.characteristics=") + prop);
+    }
+
+    // --- /proc/cpuinfo via SYS_openat — bypasses Java FileInputStream hook ---
+    // Frida bypass script said "read filtering not implemented"; even if it were,
+    // native syscall read bypasses Java-layer interception.
+    {
+        char cpu_buf[8192] = {};
+        int fd = (int)syscall(__NR_openat, AT_FDCWD, "/proc/cpuinfo", O_RDONLY | O_CLOEXEC, 0);
+        if (fd >= 0) {
+            ssize_t n = read(fd, cpu_buf, (int)sizeof(cpu_buf) - 1);
+            close(fd);
+            if (n > 0) {
+                std::string cpu = str_lower(std::string(cpu_buf, (size_t)n));
+                if (cpu.find("goldfish") != std::string::npos)
+                    hits.push_back("cpuinfo:Hardware=Goldfish (QEMU AVD)");
+                else if (cpu.find("ranchu") != std::string::npos)
+                    hits.push_back("cpuinfo:Hardware=Ranchu (QEMU AVD)");
+            }
+        }
+    }
+
+    return hits;
+}
+
+// =============================================================================
 // JNI bridge — aggregate all results
 // =============================================================================
 
@@ -926,6 +1009,10 @@ extern "C" {
 JNIEXPORT jobjectArray JNICALL
 Java_id_jayatech_rootdetector_detector_NativeDetector_nativeScan(JNIEnv* env, jobject) {
     std::vector<std::string> results;
+
+    // --- Emulator detection via direct syscalls (not bypassable by Frida Java hooks) ---
+    for (auto& s : detect_emulator_native())
+        results.push_back("EMU:" + s);
 
     // --- Maps: suspicious libs (filtered for system paths) ---
     for (auto& s : scan_maps_suspicious_libs())

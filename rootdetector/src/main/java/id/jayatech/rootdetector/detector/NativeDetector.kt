@@ -299,6 +299,21 @@ internal class NativeDetector(context: Context) : BaseDetector(context) {
             )
         }
 
+        // Emulator detection via direct syscalls — NOT interceptable by Frida Java hooks.
+        // Build.HARDWARE and File.exists() are hookable; __system_property_get() and
+        // direct SYS_newfstatat/SYS_openat syscalls are not.
+        byPrefix["EMU"]?.takeIf { it.isNotEmpty() }?.let {
+            findings += RootIndicator(
+                id = "native_emulator",
+                category = DetectorCategory.EMULATOR,
+                title = "[Native] Emulator Confirmed via Syscall",
+                detail = "Emulator artifacts verified through direct kernel syscalls — " +
+                         "bypasses Frida Java hooks on Build.* and File.exists()",
+                risk = RiskLevel.HIGH,
+                evidence = it
+            )
+        }
+
         // Root-related env var left in our process by Zygisk/Magisk before DenyList cleanup
         byPrefix["ROOT_ENV"]?.takeIf { it.isNotEmpty() }?.let {
             findings += RootIndicator(
