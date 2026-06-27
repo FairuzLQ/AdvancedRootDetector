@@ -732,26 +732,8 @@ static std::vector<std::string> scan_proc_for_root_daemons() {
             }
         }
 
-        if (found_this_pid) continue;
-
-        // 3. /proc/<pid>/exe — kernel resolves this symlink in ROOT mount namespace,
-        // NOT our DenyList-isolated namespace. Even if /sbin is unmounted from our
-        // namespace, readlink here still returns the original path like /sbin/magisk64.
-        // Also catches processes that renamed comm/cmdline to evade detection.
-        snprintf(path, sizeof(path), "/proc/%s/exe", pid);
-        char exe[256] = {};
-        ssize_t elen = readlink(path, exe, sizeof(exe) - 1);
-        if (elen > 0) {
-            std::string exe_str(exe, elen);
-            std::string lower = exe_str;
-            for (char& c : lower) c = (char)tolower((unsigned char)c);
-            if (lower.find("magisk") != std::string::npos ||
-                lower.find("kitsune") != std::string::npos ||
-                lower.find("ksud") != std::string::npos ||
-                lower.find("apd") != std::string::npos) {
-                hits.push_back("exe=" + exe_str + " (PID " + std::string(pid) + ")");
-            }
-        }
+        // NOTE: /proc/<pid>/exe readlink is permission-denied even for shell user on
+        // Magisk-protected devices — skip it to avoid wasted open() calls per PID.
     }
     closedir(dir);
     return hits;
@@ -807,11 +789,15 @@ static std::vector<std::string> find_unknown_root_processes() {
         close(fd);
         if (n <= 0) continue;
 
-        // Parse "Uid:\t<real>\t..." — real UID is first value
+        // Parse "Uid:\t<real>\t..." — real UID is first value.
+        // Use strchr to find ':' so we work correctly whether the match came
+        // from "\nUid:" (pointer at '\n') or "Uid:" (pointer at 'U').
         char* uid_p = strstr(buf, "\nUid:");
         if (!uid_p) uid_p = strstr(buf, "Uid:");
         if (!uid_p) continue;
-        uid_p += 4; // skip "Uid:"
+        uid_p = strchr(uid_p, ':'); // advance to the ':' in "Uid:"
+        if (!uid_p) continue;
+        uid_p++; // skip ':'
         while (*uid_p == '\t' || *uid_p == ' ') uid_p++;
         if (atoi(uid_p) != 0) continue; // not root
 

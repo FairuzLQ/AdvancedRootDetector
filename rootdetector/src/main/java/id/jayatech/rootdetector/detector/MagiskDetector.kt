@@ -287,24 +287,36 @@ internal class MagiskDetector(context: Context) : BaseDetector(context) {
     }
 
     private fun detectRootDaemonsViaPs(): RootIndicator? {
-        // Lighter ps output (NAME only, not full -ef) — faster on slow devices.
-        // 3-second timeout in case ps is slow on Android 8.
-        val output = runShellCommand(
-            "ps -A -o PID,NAME 2>/dev/null || ps -o pid,comm 2>/dev/null",
+        val evidence = mutableListOf<String>()
+
+        // Approach A: ps | grep — pipes filter output so even large process lists are fast.
+        // Tested on emulator: UID=app can see magiskd in ps output.
+        val psOutput = runShellCommand(
+            "ps -A 2>/dev/null | grep -iE 'magiskd|magisk64|magisk32|ksud|apd|kpatch'",
             timeoutMs = 3000
         )
-        if (output.isBlank()) return null
-        val keywords = listOf("magiskd", "magisk64", "magisk32", "ksud", "apd", "kpatch")
-        val found = output.lines()
-            .filter { line -> keywords.any { line.contains(it, ignoreCase = true) } }
+        psOutput.lines().filter { it.isNotBlank() }.take(5).forEach { evidence += "ps: $it" }
+
+        // Approach B: cat /proc/*/comm via shell glob — one subprocess reads ALL comm files.
+        // Even if native open() per-PID is slow, shell glob is batched efficiently.
+        // Returns just the process name, one per line.
+        val commOutput = runShellCommand(
+            "cat /proc/[0-9]*/comm 2>/dev/null | grep -ixE 'magiskd|magisk64|magisk32|ksud|apd'",
+            timeoutMs = 3000
+        )
+        commOutput.lines()
+            .filter { it.isNotBlank() }
+            .distinct()
             .take(5)
-        return if (found.isNotEmpty()) RootIndicator(
+            .forEach { evidence += "comm: $it" }
+
+        return if (evidence.isNotEmpty()) RootIndicator(
             id = "magisk_proc_ps",
             category = DetectorCategory.MAGISK,
             title = "Root Daemon in Process List",
-            detail = "Root daemon found via `ps` subprocess — not affected by Zygisk in-process hooks",
+            detail = "Root daemon found via shell subprocess — not affected by Zygisk in-process hooks",
             risk = RiskLevel.CRITICAL,
-            evidence = found
+            evidence = evidence
         ) else null
     }
 
