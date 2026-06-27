@@ -13,7 +13,8 @@ enum class DetectorCategory {
     PROPS,
     MOUNT,
     NATIVE,
-    INTEGRITY
+    INTEGRITY,
+    EMULATOR
 }
 
 data class RootIndicator(
