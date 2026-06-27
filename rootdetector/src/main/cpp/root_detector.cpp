@@ -471,30 +471,92 @@ static std::vector<std::string> check_function_interposition() {
 
 static std::vector<std::string> scan_file_descriptors() {
     std::vector<std::string> hits;
-    const char* suspicious_fd[] = {
-        "magisk", "zygisk", "ksu", "apatch", "apd", "ksud", "shamiko",
-        "/data/adb", "/dev/kp", "/dev/apatch",
+
+    // Paths that are ALWAYS suspicious regardless of context.
+    // These are specific enough that they won't appear in Base64 install hashes.
+    static const char* kSuspiciousPaths[] = {
+        "/data/adb/",      // Magisk/KSU runtime data
+        "/dev/kp",         // APatch kernel device
+        "/dev/apatch",     // APatch device
+        "/memfd:frida",    // Frida gadget in memfd
         nullptr
     };
+
+    // Package name prefixes for root managers — matched against the package segment only
+    // (the part before the first '-' in /data/app/~~hash~~/PACKAGE-hash==/...)
+    // Short keywords ("ksu","apd") are NOT used here because APK install hashes are Base64
+    // and can contain these 3-letter sequences by chance, producing false positives.
+    static const char* kRootPkgPrefixes[] = {
+        "com.topjohnwu.magisk",
+        "io.github.huskydg.magisk",
+        "io.github.vvb2060.magisk",
+        "io.github.huskydg.shamiko",
+        "io.github.rezygisk",
+        "com.rnfsd.ksunext",
+        "me.weishu.kernelsu",
+        "io.github.neozsugisk",
+        "com.bmax.apatch",
+        nullptr
+    };
+
+    // Longer keyword patterns safe to search full path — 7+ chars, won't appear in typical hashes
+    static const char* kLongPatterns[] = {
+        "magiskd", "magisk64", "magisk32", "zygisk", "shamiko",
+        "xposed", "edxposed", "lspatch", "frida-agent",
+        nullptr
+    };
+
     DIR* dir = opendir("/proc/self/fd");
     if (!dir) return hits;
     dirent* entry;
     while ((entry = readdir(dir)) != nullptr) {
         if (!isdigit((unsigned char)entry->d_name[0])) continue;
         char link[PATH_MAX]{};
-        char path[64];
-        snprintf(path, sizeof(path), "/proc/self/fd/%s", entry->d_name);
-        ssize_t len = readlink(path, link, sizeof(link) - 1);
+        char proc_path[64];
+        snprintf(proc_path, sizeof(proc_path), "/proc/self/fd/%s", entry->d_name);
+        ssize_t len = readlink(proc_path, link, sizeof(link) - 1);
         if (len <= 0) continue;
         link[len] = '\0';
-        std::string lower = str_lower(std::string(link));
-        for (int i = 0; suspicious_fd[i]; i++) {
-            if (lower.find(suspicious_fd[i]) != std::string::npos) {
-                char buf[PATH_MAX + 32];
-                snprintf(buf, sizeof(buf), "fd[%s] -> %s", entry->d_name, link);
-                hits.push_back(buf);
-                break;
+        std::string path_str(link);
+        std::string lower = str_lower(path_str);
+        bool hit = false;
+
+        // 1. Specific always-suspicious paths
+        for (int i = 0; kSuspiciousPaths[i] && !hit; i++) {
+            if (lower.find(kSuspiciousPaths[i]) != std::string::npos) hit = true;
+        }
+
+        // 2. Long keyword patterns (safe substring search)
+        for (int i = 0; kLongPatterns[i] && !hit; i++) {
+            if (lower.find(kLongPatterns[i]) != std::string::npos) hit = true;
+        }
+
+        // 3. For /data/app/ paths: extract package segment (before first '-' after last '/')
+        //    and match only against that, not the full path (avoids Base64 hash false positives)
+        if (!hit && lower.find("/data/app/") != std::string::npos) {
+            // Find second-to-last '/' component which is "PACKAGE-HASH=="
+            size_t last_slash = lower.rfind('/');
+            size_t prev_slash = (last_slash > 0) ? lower.rfind('/', last_slash - 1) : std::string::npos;
+            if (prev_slash != std::string::npos) {
+                std::string pkg_segment = lower.substr(prev_slash + 1, last_slash - prev_slash - 1);
+                // Package segment is "com.package.name-base64hash==". Extract just the package name.
+                size_t dash_pos = pkg_segment.find('-');
+                std::string pkg_name = (dash_pos != std::string::npos)
+                                       ? pkg_segment.substr(0, dash_pos)
+                                       : pkg_segment;
+                for (int i = 0; kRootPkgPrefixes[i] && !hit; i++) {
+                    if (pkg_name.find(kRootPkgPrefixes[i]) != std::string::npos) hit = true;
+                }
+                // Also check if pkg_name itself has ksu/ksud explicitly (e.g. com.rnfsd.ksunext)
+                if (!hit && (pkg_name.find("ksunext") != std::string::npos ||
+                             pkg_name.find("kernelsu") != std::string::npos)) hit = true;
             }
+        }
+
+        if (hit) {
+            char buf[PATH_MAX + 32];
+            snprintf(buf, sizeof(buf), "fd[%s] -> %s", entry->d_name, link);
+            hits.push_back(buf);
         }
     }
     closedir(dir);
@@ -624,16 +686,31 @@ static std::vector<std::string> check_kernel_version_strings() {
     f.close();
     if (ver.empty()) return hits;
 
-    static const char* kSuspect[] = {
+    // Strings that directly identify a root-modified kernel
+    static const char* kRootStrings[] = {
         "ksu", "kernelsu", "kitsune", "apatch",
         "magisk", "userdebug", "test-keys",
         nullptr
     };
+    // Known custom Android kernel projects — high correlation with root
+    // (not proof alone, but combined with other signals → strong indicator)
+    static const char* kCustomKernels[] = {
+        "blu-spark", "sultan", "arter97", "kali", "nexkernel",
+        "proton", "darkhorse", "immensity", "elementalx",
+        nullptr
+    };
+
     std::string lower = ver;
     for (char& c : lower) c = (char)tolower((unsigned char)c);
-    for (int i = 0; kSuspect[i]; i++) {
-        if (lower.find(kSuspect[i]) != std::string::npos)
-            hits.push_back(std::string(kSuspect[i]) + " in /proc/version: " + ver);
+
+    for (int i = 0; kRootStrings[i]; i++) {
+        if (lower.find(kRootStrings[i]) != std::string::npos)
+            hits.push_back(std::string(kRootStrings[i]) + " in /proc/version: " + ver);
+    }
+    // Custom kernels: prefix with "CUSTOM_KERNEL:" to distinguish risk level in Java
+    for (int i = 0; kCustomKernels[i]; i++) {
+        if (lower.find(kCustomKernels[i]) != std::string::npos)
+            hits.push_back(std::string("CUSTOM_KERNEL:") + kCustomKernels[i] + " in /proc/version: " + ver);
     }
     return hits;
 }
@@ -850,20 +927,21 @@ static std::vector<std::string> find_unknown_root_processes() {
 // A successful connect (not ECONNREFUSED) means the socket exists.
 // =============================================================================
 static std::string probe_magisk_socket() {
-    static const char* kSockets[] = {
+    // Abstract sockets — DenyList CANNOT block these (they live in network namespace,
+    // not mount namespace). Only work with older/specific Magisk builds.
+    static const char* kAbstractSockets[] = {
         "magisk_daemon",
         "MAGISKTMP",
         nullptr
     };
 
-    for (int k = 0; kSockets[k]; k++) {
+    for (int k = 0; kAbstractSockets[k]; k++) {
         int sock = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
         if (sock < 0) continue;
 
         struct sockaddr_un addr = {};
         addr.sun_family = AF_UNIX;
-        // abstract socket: sun_path[0] = '\0', rest is the name
-        const char* name = kSockets[k];
+        const char* name = kAbstractSockets[k];
         size_t namelen = strlen(name);
         memcpy(addr.sun_path + 1, name, namelen);
         socklen_t addrlen = (socklen_t)(offsetof(struct sockaddr_un, sun_path) + 1 + namelen);
@@ -872,12 +950,53 @@ static std::string probe_magisk_socket() {
         int err = errno;
         close(sock);
 
-        // ENOENT / ECONNREFUSED → socket doesn't exist
-        // Anything else (including success, EAGAIN, EPERM) → socket IS there
         if (ret == 0 || (err != ENOENT && err != ECONNREFUSED)) {
-            return std::string("@") + name + " (err=" + std::to_string(err) + ")";
+            return std::string("abstract:@") + name + " (err=" + std::to_string(err) + ")";
         }
     }
+
+    // Filesystem sockets — blocked by DenyList (mount namespace isolation).
+    // But if DenyList is NOT active for our app, these paths are accessible.
+    // Check via direct SYS_newfstatat (bypasses libc stat hook), then connect.
+    static const char* kFsSockets[] = {
+        "/sbin/.magisk/socket",
+        "/dev/.magisk.unblock",
+        "/sbin/.core/mirror",
+        nullptr
+    };
+
+    for (int k = 0; kFsSockets[k]; k++) {
+        // First verify the path exists at VFS level (not hidden at VFS layer)
+        if (!file_exists_syscall(kFsSockets[k])) continue;
+
+        int sock = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (sock < 0) continue;
+
+        struct sockaddr_un addr = {};
+        addr.sun_family = AF_UNIX;
+        strncpy(addr.sun_path, kFsSockets[k], sizeof(addr.sun_path) - 1);
+        socklen_t addrlen = (socklen_t)(offsetof(struct sockaddr_un, sun_path) + strlen(kFsSockets[k]) + 1);
+
+        errno = 0;  // reset before connect so we capture the real error
+        int ret = connect(sock, (const struct sockaddr*)&addr, addrlen);
+        int err = errno;
+        close(sock);
+
+        if (ret == 0) {
+            // Successfully connected to Magisk daemon socket
+            return std::string("fs:") + kFsSockets[k] + " (connected)";
+        }
+        if (err == ECONNREFUSED) {
+            // ECONNREFUSED → socket file exists and is a valid Unix socket, daemon not accepting.
+            // Still conclusive evidence of Magisk.
+            return std::string("fs:") + kFsSockets[k] + " (ECONNREFUSED — socket exists)";
+        }
+        if (err != ENOENT && err != EACCES) {
+            // Any other error besides "not found" or "permission denied" → socket is there
+            return std::string("fs:") + kFsSockets[k] + " (err=" + std::to_string(err) + ")";
+        }
+    }
+
     return "";
 }
 
@@ -1013,6 +1132,26 @@ Java_id_jayatech_rootdetector_detector_NativeDetector_nativeScan(JNIEnv* env, jo
     // --- Emulator detection via direct syscalls (not bypassable by Frida Java hooks) ---
     for (auto& s : detect_emulator_native())
         results.push_back("EMU:" + s);
+
+    // --- su binary via direct syscall — Java File.exists() can be blocked by SELinux on A16
+    //     even without an audit log. __NR_newfstatat syscall uses a different code path.
+    {
+        static const char* kSuPaths[] = {
+            "/system/bin/su", "/system/xbin/su", "/sbin/su",
+            "/system/sbin/su", "/vendor/bin/su", "/product/bin/su",
+            nullptr
+        };
+        std::vector<std::string> found_su;
+        for (int i = 0; kSuPaths[i]; i++) {
+            if (file_exists_syscall(kSuPaths[i]))
+                found_su.push_back(kSuPaths[i]);
+        }
+        if (!found_su.empty()) {
+            std::string detail = "su binary detected via direct SYS_newfstatat:";
+            for (auto& p : found_su) detail += " " + p;
+            results.push_back("SU_BIN:" + detail);
+        }
+    }
 
     // --- Maps: suspicious libs (filtered for system paths) ---
     for (auto& s : scan_maps_suspicious_libs())

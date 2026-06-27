@@ -11,8 +11,8 @@ android {
         applicationId = "id.jayatech.rootdetector.app"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 12
-        versionName = "1.4.1"
+        versionCode = 16
+        versionName = "1.5.0"
     }
 
     signingConfigs {

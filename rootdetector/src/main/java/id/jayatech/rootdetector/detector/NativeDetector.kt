@@ -251,13 +251,28 @@ internal class NativeDetector(context: Context) : BaseDetector(context) {
         }
 
         // Kernel version strings — /proc/version is kernel-owned, cannot be spoofed.
-        byPrefix["KERNEL_STR"]?.takeIf { it.isNotEmpty() }?.let {
+        val kernelStrEvidence = byPrefix["KERNEL_STR"]?.filter { !it.startsWith("CUSTOM_KERNEL:") }
+        kernelStrEvidence?.takeIf { it.isNotEmpty() }?.let {
             findings += RootIndicator(
                 id = "native_kernel_str",
                 category = DetectorCategory.NATIVE,
                 title = "[Native] Root String in Kernel Version",
                 detail = "Root-related keyword found in /proc/version — custom/modified kernel",
                 risk = RiskLevel.HIGH,
+                evidence = it
+            )
+        }
+
+        // Known custom kernel builders — high correlation with root but not conclusive alone
+        val customKernelEvidence = byPrefix["KERNEL_STR"]?.filter { it.startsWith("CUSTOM_KERNEL:") }
+            ?.map { it.removePrefix("CUSTOM_KERNEL:") }
+        customKernelEvidence?.takeIf { it.isNotEmpty() }?.let {
+            findings += RootIndicator(
+                id = "native_custom_kernel",
+                category = DetectorCategory.PROPS,
+                title = "Custom Kernel Detected",
+                detail = "Known aftermarket kernel builder found in /proc/version — stock OEM kernels never have these strings",
+                risk = RiskLevel.MEDIUM,
                 evidence = it
             )
         }
@@ -294,6 +309,18 @@ internal class NativeDetector(context: Context) : BaseDetector(context) {
                 category = DetectorCategory.NATIVE,
                 title = "[Native] Root Daemon Process Running",
                 detail = "Root daemon found in /proc (comm/cmdline/exe) — DenyList cannot hide processes",
+                risk = RiskLevel.CRITICAL,
+                evidence = it
+            )
+        }
+
+        // su binary via direct SYS_newfstatat — bypasses Java File.exists() SELinux quirks on A16+
+        byPrefix["SU_BIN"]?.takeIf { it.isNotEmpty() }?.let {
+            findings += RootIndicator(
+                id = "native_su_bin",
+                category = DetectorCategory.BINARY,
+                title = "[Native] su Binary Detected via Syscall",
+                detail = "su binary found using direct kernel syscall — bypasses SELinux audit suppression on Android 16+",
                 risk = RiskLevel.CRITICAL,
                 evidence = it
             )
