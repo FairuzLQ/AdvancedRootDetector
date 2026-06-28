@@ -132,14 +132,17 @@ internal class PropsDetector(context: Context) : BaseDetector(context) {
         val directProps = listOf(
             "ro.magisk.version",
             "persist.sys.zygisk",
-            "ro.build.selinux",
+            // NOTE: ro.build.selinux=1 is normal on all modern Android — do NOT include here.
+            // SELinux state is checked separately in detectSelinux() via /sys/fs/selinux/enforce.
         )
         val evidence = mutableListOf<String>()
 
         // One subprocess dumps all props — parse directly instead of N getprop calls.
         // getprop piped to grep is fast; 3 s timeout is generous for old devices.
+        // IMPORTANT: avoid short patterns like "ksu" — they match substrings in unrelated props
+        // (e.g. "ro.boot.emmc_checksum" contains "ksu"). Use "kernelsu" or full prop names instead.
         val grepOut = runShellCommand(
-            "getprop | grep -iE 'magisk|zygisk|kitsune|apatch|ksu|supersu'",
+            "getprop | grep -iE 'magisk|zygisk|kitsune|apatch|kernelsu|supersu'",
             timeoutMs = 3000
         )
         grepOut.lines().filter { it.isNotBlank() }.take(8).forEach { evidence += it.trim() }
