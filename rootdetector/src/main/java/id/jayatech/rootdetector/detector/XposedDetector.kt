@@ -30,7 +30,11 @@ internal class XposedDetector(context: Context) : BaseDetector(context) {
     private val xposedPaths = listOf(
         "/system/framework/XposedBridge.jar",
         "/system/xposed.prop",
+        // LSPosed — all known install path variants
         "/data/adb/modules/lsposed",
+        "/data/adb/modules/zygisk_lsposed",      // most common Zygisk-based install
+        "/data/adb/modules/Lsposed-MI",           // some custom builds
+        "/data/misc/lspd",                        // LSPosed daemon data — accessible on Android 8
         "/data/adb/lspatch",
         "/system/framework/edxp.jar",
         "/data/adb/modules/edxposed",

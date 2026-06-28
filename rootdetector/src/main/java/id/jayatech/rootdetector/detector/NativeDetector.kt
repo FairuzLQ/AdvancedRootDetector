@@ -31,6 +31,7 @@ import id.jayatech.rootdetector.model.RootIndicator
  *   SBIN_PATH:   — /sbin root binary found via direct syscall (Kitsune/Magisk /sbin leak)
  *   KERNEL_STR:  — root-related string in /proc/version (kernel-level, unspoofable)
  *   ROOT_PROC:   — root daemon found in /proc process table (DenyList doesn't hide processes)
+ *   XPOSED_PROC: — Xposed-layer daemon (lspd) found in /proc — LSPosed is active
  */
 internal class NativeDetector(context: Context) : BaseDetector(context) {
 
@@ -309,6 +310,19 @@ internal class NativeDetector(context: Context) : BaseDetector(context) {
                 category = DetectorCategory.NATIVE,
                 title = "[Native] Root Daemon Process Running",
                 detail = "Root daemon found in /proc (comm/cmdline/exe) — DenyList cannot hide processes",
+                risk = RiskLevel.CRITICAL,
+                evidence = it
+            )
+        }
+
+        // Xposed-layer daemon in /proc — lspd is always running when LSPosed is active.
+        // Not UID-0, but its presence definitively indicates LSPosed framework is loaded.
+        byPrefix["XPOSED_PROC"]?.takeIf { it.isNotEmpty() }?.let {
+            findings += RootIndicator(
+                id = "native_xposed_proc",
+                category = DetectorCategory.XPOSED,
+                title = "[Native] LSPosed Daemon Process Running",
+                detail = "lspd process found in /proc — LSPosed framework is active on this device",
                 risk = RiskLevel.CRITICAL,
                 evidence = it
             )

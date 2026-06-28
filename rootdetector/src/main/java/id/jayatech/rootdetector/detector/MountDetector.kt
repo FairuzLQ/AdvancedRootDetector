@@ -15,6 +15,7 @@ internal class MountDetector(context: Context) : BaseDetector(context) {
         detectRwSystem(mountLines)?.let { findings += it }
         detectDataAdb(mountLines)?.let { findings += it }
         detectMagiskTmpfs(mountLines)?.let { findings += it }
+        detectZygiskMount(mountLines)?.let { findings += it }
         detectKsuMounts(mountLines)?.let { findings += it }
         detectDenyListActive()?.let { findings += it }
         detectMountNamespaceIsolation()?.let { findings += it }
@@ -110,15 +111,16 @@ internal class MountDetector(context: Context) : BaseDetector(context) {
         for (line in mounts) {
             val parts = line.split(" ")
             if (parts.size < 3) continue
-            val fsType = parts[2]
+            val device     = parts[0]
             val mountPoint = parts[1]
-            // Magisk-specific tmpfs mounts have explicit "magisk" or ".core" in path
-            if (fsType == "tmpfs" && (
-                    mountPoint.contains("magisk", ignoreCase = true) ||
-                    mountPoint == "/.magisk" ||
-                    mountPoint.contains(".core")
-                )
-            ) {
+            val fsType     = parts[2]
+            // Match by device name "magisk" (e.g. "magisk /sbin tmpfs") OR by mount-point keyword
+            val deviceIsMagisk = device.equals("magisk", ignoreCase = true)
+            val pathIsMagisk   = mountPoint.contains("magisk", ignoreCase = true) ||
+                                 mountPoint == "/.magisk" ||
+                                 mountPoint.contains(".core")
+            if (fsType == "tmpfs" && (deviceIsMagisk || pathIsMagisk) &&
+                !mountPoint.contains("libzygisk")) {  // libzygisk handled by detectZygiskMount
                 evidence += line.trim()
             }
         }
@@ -126,7 +128,42 @@ internal class MountDetector(context: Context) : BaseDetector(context) {
             id = "mount_magisk_tmpfs",
             category = DetectorCategory.MOUNT,
             title = "Magisk tmpfs Mount",
-            detail = "Magisk runtime tmpfs directory found in mount table",
+            detail = "Magisk runtime tmpfs mount found in /proc/self/mounts — device name or path shows Magisk origin",
+            risk = RiskLevel.CRITICAL,
+            evidence = evidence
+        ) else null
+    }
+
+    /**
+     * Zygisk library injection via tmpfs bind-mount.
+     *
+     * When Zygisk (built-in Magisk) is active, Magisk mounts a custom libzygisk.so
+     * into /system/lib64 and /system/lib from its tmpfs so Zygote picks it up at startup.
+     * This mount entry is visible in /proc/self/mounts with device name "magisk"
+     * — readable from any app without root, and not removable by DenyList (it's baked into
+     * the Zygote mount namespace before the app forks).
+     *
+     * Confirmed on Magisk 28.1 / Android 8.1 (Redmi 5):
+     *   magisk /system/lib64/libzygisk.so tmpfs ro,seclabel,relatime,...
+     *   magisk /system/lib/libzygisk.so  tmpfs ro,seclabel,relatime,...
+     */
+    private fun detectZygiskMount(mounts: List<String>): RootIndicator? {
+        val evidence = mutableListOf<String>()
+        for (line in mounts) {
+            val parts = line.split(" ")
+            if (parts.size < 3) continue
+            val device     = parts[0]
+            val mountPoint = parts[1]
+            if (device.equals("magisk", ignoreCase = true) &&
+                mountPoint.contains("libzygisk", ignoreCase = true)) {
+                evidence += line.trim()
+            }
+        }
+        return if (evidence.isNotEmpty()) RootIndicator(
+            id = "mount_zygisk_lib",
+            category = DetectorCategory.ZYGISK,
+            title = "Zygisk Library Bind-Mount Detected",
+            detail = "Magisk mounts libzygisk.so into /system/lib64 via tmpfs — Zygisk framework is active",
             risk = RiskLevel.CRITICAL,
             evidence = evidence
         ) else null

@@ -52,6 +52,13 @@ object RootDetector {
 
         val summary = allIndicators.groupBy { it.category }
 
+        // Logcat export — read with: adb logcat -s RootDetector:I
+        android.util.Log.i("RootDetector", "=== SCAN COMPLETE: ${allIndicators.size} indicators, score=$score ===")
+        allIndicators.forEach { ind ->
+            android.util.Log.i("RootDetector", "[${ind.risk}] ${ind.category} | ${ind.id} | ${ind.title}")
+            ind.evidence.take(3).forEach { ev -> android.util.Log.i("RootDetector", "   evidence: $ev") }
+        }
+
         return DetectionResult(
             isRooted = allIndicators.isNotEmpty(),
             riskScore = score,

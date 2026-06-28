@@ -748,6 +748,7 @@ static std::vector<std::string> scan_sbin_paths() {
 // magiskd/ksud/apd appear in /proc regardless of DenyList or Shamiko.
 // /proc/<pid>/comm is readable by untrusted_app per Android SELinux policy.
 // =============================================================================
+// Returns strings prefixed with "ROOT_PROC:" or "XPOSED_PROC:" depending on daemon type.
 static std::vector<std::string> scan_proc_for_root_daemons() {
     std::vector<std::string> hits;
 
@@ -755,6 +756,12 @@ static std::vector<std::string> scan_proc_for_root_daemons() {
         "magiskd", "magisk32", "magisk64", "magiskinit", "magiskpolicy",
         "ksud", "ksumd",
         "apd", "kpatch",
+        nullptr
+    };
+    // Xposed-layer daemons — not UID-0 but indicate active Xposed framework.
+    // "lspd" is the LSPosed daemon; always present when LSPosed is active.
+    static const char* kXposedComms[] = {
+        "lspd",
         nullptr
     };
 
@@ -778,16 +785,25 @@ static std::vector<std::string> scan_proc_for_root_daemons() {
             for (int i = 0; comm[i]; i++) if (comm[i] == '\n') { comm[i] = 0; break; }
             for (int k = 0; kRootComms[k]; k++) {
                 if (strcmp(comm, kRootComms[k]) == 0) {
-                    hits.push_back(std::string(comm) + " (PID " + pid + ")");
+                    hits.push_back("ROOT_PROC:" + std::string(comm) + " (PID " + pid + ")");
                     found_this_pid = true;
                     break;
+                }
+            }
+            if (!found_this_pid) {
+                for (int k = 0; kXposedComms[k]; k++) {
+                    if (strcmp(comm, kXposedComms[k]) == 0) {
+                        hits.push_back("XPOSED_PROC:" + std::string(comm) + " (PID " + pid + ")");
+                        found_this_pid = true;
+                        break;
+                    }
                 }
             }
         }
 
         if (found_this_pid) continue;
 
-        // 2. /proc/<pid>/cmdline — full argv[0]
+        // 2. /proc/<pid>/cmdline — full argv[0] (comm is often "main" for renamed daemons)
         snprintf(path, sizeof(path), "/proc/%s/cmdline", pid);
         char cmdline[256] = {};
         fd = open(path, O_RDONLY);
@@ -797,13 +813,22 @@ static std::vector<std::string> scan_proc_for_root_daemons() {
             if (n > 0) {
                 for (ssize_t i = 0; i < n; i++) if (cmdline[i] == '\0') cmdline[i] = ' ';
                 std::string cmd(cmdline, n);
+                // Trim trailing whitespace for exact matching
+                while (!cmd.empty() && (cmd.back() == ' ' || cmd.back() == '\n')) cmd.pop_back();
                 std::string lower = cmd;
                 for (char& c : lower) c = (char)tolower((unsigned char)c);
                 if (lower.find("magiskd") != std::string::npos ||
                     lower.find("magisk --") != std::string::npos ||
                     lower.find("/magisk64") != std::string::npos ||
                     lower.find("/magisk32") != std::string::npos) {
-                    hits.push_back("PID " + std::string(pid) + ": " + cmd.substr(0, 60));
+                    hits.push_back("ROOT_PROC:PID " + std::string(pid) + ": " + cmd.substr(0, 60));
+                    found_this_pid = true;
+                }
+                // LSPosed daemon — cmdline is "lspd" but comm is "main".
+                // Note: hidepid=2 on /proc hides foreign PIDs from untrusted_app,
+                // so this only fires on devices where /proc is less restricted.
+                if (!found_this_pid && (lower == "lspd" || lower.find("/lspd") != std::string::npos)) {
+                    hits.push_back("XPOSED_PROC:lspd (PID " + std::string(pid) + ")");
                     found_this_pid = true;
                 }
             }
@@ -1192,8 +1217,9 @@ Java_id_jayatech_rootdetector_detector_NativeDetector_nativeScan(JNIEnv* env, jo
 
     // --- Process table scan — DenyList hides mounts, NOT processes ---
     // magiskd/ksud/apd remain visible in /proc regardless of DenyList or Shamiko.
+    // Strings are pre-prefixed with ROOT_PROC: or XPOSED_PROC: by the scanner.
     for (auto& s : scan_proc_for_root_daemons())
-        results.push_back("ROOT_PROC:" + s);
+        results.push_back(s);
 
     // --- Unknown UID=0 process scan (catches renamed/obfuscated root daemons) ---
     for (auto& s : find_unknown_root_processes())
