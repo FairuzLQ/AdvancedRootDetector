@@ -1,6 +1,7 @@
 """Checks emulator lab JSON results against expectations.json and prints a Markdown report.
 
-Usage: check.py <out-dir> <api-level>   (report goes to stdout; exit 1 on violations)
+Usage: check.py <out-dir> <api-level> [expected,scenarios]
+       (report goes to stdout; exit 1 on violations or on an expected scenario with no result)
 """
 import json
 import os
@@ -17,6 +18,11 @@ if not os.path.isdir(out_dir):
 lines = [f"## Emulator lab — API {api}", "",
          "| Scenario | Result | isRooted | Score | Indicators |", "|---|---|---|---|---|"]
 details, failed = [], False
+expected = [x for x in (sys.argv[3].split(",") if len(sys.argv) > 3 else []) if x]
+present = {f[:-5] for f in os.listdir(out_dir) if f.endswith(".json")}
+for missing in [e for e in expected if e not in present]:
+    lines.append(f"| {missing} | FAIL: no result (scenario did not run) | – | – | – |")
+    failed = True
 for name in sorted(f[:-5] for f in os.listdir(out_dir) if f.endswith(".json")):
     data = json.load(open(os.path.join(out_dir, name + ".json")))
     exp = expectations.get(name, {})

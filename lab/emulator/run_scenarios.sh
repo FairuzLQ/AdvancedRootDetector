@@ -27,12 +27,17 @@ adb install -r -g "$APK" >/dev/null
 start_app() {
     adb shell am force-stop "$PKG"
     adb shell run-as "$PKG" rm -f "files/$1.json"
-    adb shell am start -W -n "$PKG/.MainActivity" --es lab_out "$1.json" --el lab_delay_ms "$2" >/dev/null
-    for _ in $(seq 1 30); do
-        pid=$(adb shell pidof "$PKG" | tr -d '\r')
-        [ -n "$pid" ] && { echo "$pid"; return 0; }
-        sleep 1
+    # First launch after install can be slow (dexopt); allow 90 s and re-issue the intent once.
+    for attempt in 1 2; do
+        adb shell am start -W -n "$PKG/.MainActivity" --es lab_out "$1.json" --el lab_delay_ms "$2" >/dev/null
+        for _ in $(seq 1 45); do
+            pid=$(adb shell pidof "$PKG" | tr -d '\r')
+            [ -n "$pid" ] && { echo "$pid"; return 0; }
+            sleep 1
+        done
+        echo "app did not start (attempt $attempt)" >&2
     done
+    adb logcat -d -b crash | tail -20 >&2
     return 1
 }
 

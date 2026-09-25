@@ -119,7 +119,8 @@ jobs:
         if: always()
         run: |
           set -o pipefail
-          python3 lab/emulator/check.py lab/emulator/out ${{ matrix.api }} | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 lab/emulator/check.py lab/emulator/out ${{ matrix.api }} \
+            baseline,frida_server,frida_attach,frida_hook,jdwp_debugger | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -165,7 +166,8 @@ jobs:
         if: always()
         run: |
           set -o pipefail
-          python3 lab/emulator/check.py lab/emulator/out magisk-api30-${{ matrix.target }} | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 lab/emulator/check.py lab/emulator/out magisk-api30-${{ matrix.target }} \
+            magisk,magisk_zygisk,magisk_zygisk_denylist | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
