@@ -25,7 +25,7 @@ class RuleLabTest {
     private val reportFile = System.getProperty("lab.report")?.let(::File)
 
     /** Rules that are context only (RiskLevel.INFO in the library). */
-    private val infoRules = setOf("tooling_privileged_apps", "debug_app_debuggable")
+    private val infoRules = setOf("tooling_privileged_apps", "debug_app_debuggable", "props_selinux_boot_param")
 
     private fun File.linesOrNull(name: String): List<String>? =
         File(this, name).takeIf { it.isFile }?.readLines()
@@ -55,6 +55,12 @@ class RuleLabTest {
                 props["ro.secureboot.lockstate"]?.takeIf { it == "unlocked" }?.let { "lockstate=$it" },
             )
             add("props_bootloader", unlocked)
+            val enforce = dir.textOrNull("selinux_enforce").orEmpty()
+            when (Rules.selinuxVerdict(enforce, props["ro.boot.selinux"].orEmpty())) {
+                Rules.SelinuxVerdict.PERMISSIVE -> add("props_selinux", listOf("enforce=0"))
+                Rules.SelinuxVerdict.BOOT_PARAM_ONLY -> add("props_selinux_boot_param", listOf("ro.boot.selinux=permissive"))
+                Rules.SelinuxVerdict.OK -> {}
+            }
         }
         dir.linesOrNull("mounts")?.let { l ->
             val m = Rules.parseMounts(l)

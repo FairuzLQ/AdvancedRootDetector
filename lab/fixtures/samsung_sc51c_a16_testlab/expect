@@ -1,0 +1,3 @@
+noroot
+mustnot props_selinux
+must props_selinux_boot_param

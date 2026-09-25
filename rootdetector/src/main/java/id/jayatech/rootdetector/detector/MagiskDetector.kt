@@ -206,8 +206,19 @@ internal class MagiskDetector(context: Context, props: PropSnapshot = PropSnapsh
      * then open each small user APK directly via ZipFile (bypasses PackageManager),
      * and search the DEX for Magisk-specific strings in the string pool.
      */
+    /**
+     * One `pm list packages -u -f` for both package checks. Every `pm` call starts a new
+     * app_process (JVM) — ~1 s each on real phones — so running it twice was the main cost
+     * of this detector (2–5 s in Firebase Test Lab).
+     *  -u: also packages hidden/frozen for the user (Hail, Ice Box)
+     *  -f: APK path, used by the renamed-stub scan (user apps live under /data/app/)
+     */
+    private val pmPackagesWithPaths: String by lazy {
+        runShellCommand("pm list packages -u -f 2>/dev/null", timeoutMs = 5000)
+    }
+
     private fun detectRenamedMagiskApk(): RootIndicator? {
-        val pmOutput = runShellCommand("pm list packages -u -3 -f 2>/dev/null", timeoutMs = 5000)
+        val pmOutput = pmPackagesWithPaths
         if (pmOutput.isBlank()) return null
 
         val magiskSigs = listOf(
@@ -245,6 +256,7 @@ internal class MagiskDetector(context: Context, props: PropSnapshot = PropSnapsh
                 val apkPath = rest.substring(0, eqIdx).trim()
                 val pkgName = rest.substring(eqIdx + 1).trim()
                 if (apkPath.isEmpty() || pkgName.isEmpty() || pkgName == selfPkg) return@mapNotNull null
+                if (!apkPath.startsWith("/data/app/")) return@mapNotNull null  // third-party only
                 val f = java.io.File(apkPath)
                 if (!f.exists()) return@mapNotNull null
                 val sz = f.length()
@@ -356,7 +368,7 @@ internal class MagiskDetector(context: Context, props: PropSnapshot = PropSnapsh
     }
 
     private fun detectPackagesViaShell(): RootIndicator? {
-        val output = runShellCommand("pm list packages -u 2>/dev/null", timeoutMs = 4000)  // -u: also frozen/hidden apps (Hail, Ice Box)
+        val output = pmPackagesWithPaths
         if (output.isBlank()) return null
 
         val found = Rules.rootPackagesInPmList(output)

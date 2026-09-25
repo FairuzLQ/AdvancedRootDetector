@@ -1,20 +1,50 @@
 # Changelog
 
-## [Unreleased]
-- `native_inline_hook`: libc prologues in memory vs libc.so on disk — catches Frida Interceptor
-  hooks regardless of name (verified on emulator API 30/34/35)
+## [1.6.1] — Real-Device False Positive Fixes + Inline Hook Detection
+
+## What's New
+
+### Inline hook detection (`native_inline_hook`)
+The first bytes of critical libc functions (`open`, `openat`, `read`, `access`, `stat`, …) in
+memory are compared with `libc.so` on disk (read through raw syscalls). Name-independent: it
+catches Frida's Interceptor however the agent is named. Verified on emulators API 30/34/35 with
+Frida 17 — `open()` in memory `e973…` (Frida's jump) vs disk `5541…`.
+
+### Device lab (Firebase Test Lab)
+The scan now runs on **real, stock phones** as a false-positive gate
+(`CleanDeviceScanTest`, `.github/workflows/device-lab.yml`).
+
+## Bug Fixes — false positives found on real phones
+- **Samsung SC-51C (Android 16):** `ro.boot.selinux=permissive` alone was flagged CRITICAL
+  "SELinux Not Enforcing" — the kernel still enforces. CRITICAL now needs
+  `/sys/fs/selinux/enforce = 0`; the boot parameter alone is INFO
+- **Nothing A069 (Android 16):** Key Attestation failing with an unlocked bootloader was HIGH
+  "blocked by module" — it happens on stock hardware too; now INFO
+- **Pixel 11 (Android 17):** a hardware-confirmed unlocked bootloader was HIGH; now MEDIUM, like
+  `props_bootloader` (unlocked ≠ root)
+
+## Performance
+- `su -c id` is opt-in (`RootDetector.suExecutionEnabled`, default off): on rooted phones it
+  popped up the root manager's prompt and added ~2 s to every scan
+- MagiskDetector: one `pm list packages -u -f` instead of two `pm` calls (each starts a JVM,
+  ~1 s on real phones), hidden-stub DEX scan limited to user APKs ≤1 MB, at most 25
+  (MagiskDetector took 2–5 s on real phones)
 - `DetectionResult.timingsMs`: per-detector scan time
-- `su -c id` execution is now opt-in (`RootDetector.suExecutionEnabled`): on rooted devices it
-  popped up the root prompt and added ~2 s to every scan (measured in the lab)
-- Lab: Magisk on emulator (rootAVD), Frida hook scenario, API 28–35 matrix, libFuzzer, weekly run
-- Device lab: `CleanDeviceScanTest` on real stock phones via Firebase Test Lab (false-positive gate)
-- False positives found on real phones (Firebase Test Lab) and fixed:
-  - Samsung SC-51C: `ro.boot.selinux=permissive` alone flagged CRITICAL — the kernel still enforces.
-    Now CRITICAL only when `/sys/fs/selinux/enforce` is 0; the boot param alone is INFO
-  - Nothing A069: Key Attestation failing on an unlocked bootloader flagged HIGH "blocked by
-    module" — happens on stock hardware too; now INFO
-  - Pixel 11: attestation-confirmed unlocked bootloader was HIGH; now MEDIUM like `props_bootloader`
-- Hidden-Magisk stub scan: APKs ≤1 MB, at most 25 (MagiskDetector took 2–5 s on real phones)
+
+## Lab
+- Real Magisk on emulators (rootAVD), Frida hook scenario, API 28–35 matrix, libFuzzer over the
+  native rules, weekly scheduled run
+- Rule lab: 17 scenarios incl. 2 captured from real Test Lab phones as regression fixtures
+
+## Test Results
+
+| Where | Scenario | Result |
+|---|---|---|
+| Emulator API 30/34/35 | Frida 17 attached + hook on `open()` | ✅ `native_inline_hook`, `debug_frida_threads`, `debug_frida_maps` |
+| Emulator API 30/34/35 | JDWP debugger | ✅ `debug_jdwp` |
+| Emulator API 30 | Magisk 26.4 (rootAVD) | ✅ 17 indicators |
+| Emulator | Magisk + Zygisk + DenyList | ⚠️ not testable — Zygisk does not load on emulator images |
+| Real phones (Test Lab) | Stock Pixel 11 / Nothing A069 / Samsung SC-51C | see release notes of the verification run |
 
 ## [1.6.0] — Frida & Debugger Detection + False Positive Fixes
 

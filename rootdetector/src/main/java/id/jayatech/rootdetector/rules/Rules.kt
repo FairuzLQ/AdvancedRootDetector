@@ -84,6 +84,19 @@ internal object Rules {
             ROOT_PROP_KEYWORDS.any { k.contains(it, ignoreCase = true) || v.contains(it, ignoreCase = true) }
         }.map { (k, v) -> "[$k]: [$v]" }
 
+    enum class SelinuxVerdict { PERMISSIVE, BOOT_PARAM_ONLY, OK }
+
+    /**
+     * [enforce] = contents of /sys/fs/selinux/enforce ("" if unreadable), [bootProp] = ro.boot.selinux.
+     * Only the kernel's live state proves permissive mode: stock Samsung user builds keep
+     * enforcing with androidboot.selinux=permissive (SC-51C, Firebase Test Lab).
+     */
+    fun selinuxVerdict(enforce: String, bootProp: String): SelinuxVerdict = when {
+        enforce.trim() == "0" -> SelinuxVerdict.PERMISSIVE
+        bootProp.trim() == "permissive" -> SelinuxVerdict.BOOT_PARAM_ONLY
+        else -> SelinuxVerdict.OK
+    }
+
     // -------------------------------------------------------------------------
     // Mounts (/proc/self/mounts format: device mountpoint fstype options ...)
     // -------------------------------------------------------------------------

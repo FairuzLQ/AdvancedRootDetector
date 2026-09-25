@@ -100,7 +100,8 @@ internal class PropsDetector(context: Context, props: PropSnapshot = PropSnapsho
         // The kernel's live state is the proof. The boot parameter alone is not: Samsung user
         // builds keep enforcing with androidboot.selinux=permissive (seen on a stock SC-51C in
         // Firebase Test Lab), so that case is reported as context only.
-        if (enforce == "0") {
+        val verdict = Rules.selinuxVerdict(enforce, bootSelinux)
+        if (verdict == Rules.SelinuxVerdict.PERMISSIVE) {
             return RootIndicator(
                 id = "props_selinux",
                 category = DetectorCategory.PROPS,
@@ -111,7 +112,7 @@ internal class PropsDetector(context: Context, props: PropSnapshot = PropSnapsho
                     bootSelinux.takeIf { it == "permissive" }?.let { "ro.boot.selinux=$it" })
             )
         }
-        if (bootSelinux == "permissive") {
+        if (verdict == Rules.SelinuxVerdict.BOOT_PARAM_ONLY) {
             return RootIndicator(
                 id = "props_selinux_boot_param",
                 category = DetectorCategory.PROPS,

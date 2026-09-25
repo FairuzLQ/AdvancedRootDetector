@@ -1,0 +1,5 @@
+[ro.boot.verifiedbootstate]: [orange]
+[ro.boot.vbmeta.device_state]: [unlocked]
+[ro.build.tags]: [release-keys]
+[ro.build.type]: [user]
+[ro.build.fingerprint]: [google/cubs/cubs:17/CD1A.260714.001.A9/15938155:user/release-keys]

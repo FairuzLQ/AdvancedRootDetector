@@ -1,3 +1,4 @@
-package:com.aistra.hail
-package:com.topjohnwu.magisk
-package:com.bank.app
+package:/data/app/~~hA1==/com.aistra.hail-x9==/base.apk=com.aistra.hail
+package:/data/app/~~mG2==/com.topjohnwu.magisk-k3==/base.apk=com.topjohnwu.magisk
+package:/system/priv-app/Settings/Settings.apk=com.android.settings
+package:/data/app/~~bK4==/com.bank.app-p1==/base.apk=com.bank.app
