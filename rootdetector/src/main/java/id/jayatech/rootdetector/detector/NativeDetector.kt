@@ -33,7 +33,7 @@ import id.jayatech.rootdetector.model.RootIndicator
  *   ROOT_PROC:   — root daemon found in /proc process table (DenyList doesn't hide processes)
  *   XPOSED_PROC: — Xposed-layer daemon (lspd) found in /proc — LSPosed is active
  */
-internal class NativeDetector(context: Context) : BaseDetector(context) {
+internal class NativeDetector(context: Context, props: PropSnapshot = PropSnapshot()) : BaseDetector(context, props) {
 
     companion object {
         private var nativeAvailable = false

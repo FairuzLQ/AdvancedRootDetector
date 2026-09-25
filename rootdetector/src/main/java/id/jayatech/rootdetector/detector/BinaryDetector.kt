@@ -5,7 +5,7 @@ import id.jayatech.rootdetector.model.DetectorCategory
 import id.jayatech.rootdetector.model.RiskLevel
 import id.jayatech.rootdetector.model.RootIndicator
 
-internal class BinaryDetector(context: Context) : BaseDetector(context) {
+internal class BinaryDetector(context: Context, props: PropSnapshot = PropSnapshot()) : BaseDetector(context, props) {
 
     private val suPaths = listOf(
         "/sbin/su", "/system/bin/su", "/system/xbin/su",
@@ -198,23 +198,20 @@ internal class BinaryDetector(context: Context) : BaseDetector(context) {
     }
 
     private fun detectSuExecution(): RootIndicator? {
-        return try {
-            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "id"))
-            val output = process.inputStream.bufferedReader().readLine() ?: ""
-            // Hard 2-second timeout — su with DenyList may hang waiting for user approval
-            val exited = process.waitFor(2L, java.util.concurrent.TimeUnit.SECONDS)
-            if (!exited) { process.destroyForcibly(); return null }
-            val exitCode = process.exitValue()
-            if (output.contains("uid=0") || exitCode == 0) {
-                RootIndicator(
-                    id = "binary_su_exec",
-                    category = DetectorCategory.BINARY,
-                    title = "su Execution Succeeded",
-                    detail = "su -c id returned uid=0 — fully functional root shell",
-                    risk = RiskLevel.CRITICAL,
-                    evidence = listOf(output.ifEmpty { "exit=$exitCode" })
-                )
-            } else null
-        } catch (_: Exception) { null }
+        // Hard 2-second timeout — su with DenyList may hang waiting for user approval.
+        // The old implementation called readLine() before waitFor(), so a hanging su
+        // blocked the whole scan forever; execWithTimeout drains stdout on a side thread.
+        val output = execWithTimeout(arrayOf("su", "-c", "id"), 2000)
+        // Only uid=0 in the output is proof. An exit code of 0 alone is not: OEM/userdebug
+        // `su` stubs and wrappers can exit 0 without granting root.
+        if (!output.contains("uid=0")) return null
+        return RootIndicator(
+            id = "binary_su_exec",
+            category = DetectorCategory.BINARY,
+            title = "su Execution Succeeded",
+            detail = "su -c id returned uid=0 — fully functional root shell",
+            risk = RiskLevel.CRITICAL,
+            evidence = listOf(output.lineSequence().first())
+        )
     }
 }

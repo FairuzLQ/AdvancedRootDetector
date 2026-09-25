@@ -1,6 +1,10 @@
 package id.jayatech.rootdetector.model
 
-enum class RiskLevel { LOW, MEDIUM, HIGH, CRITICAL }
+/**
+ * INFO = context only (e.g. Shizuku/Hail installed): reported, but adds 0 to the score and
+ * does not make [DetectionResult.isRooted] true.
+ */
+enum class RiskLevel { INFO, LOW, MEDIUM, HIGH, CRITICAL }
 
 enum class DetectorCategory {
     MAGISK,
@@ -14,7 +18,9 @@ enum class DetectorCategory {
     MOUNT,
     NATIVE,
     INTEGRITY,
-    EMULATOR
+    EMULATOR,
+    DEBUG,
+    TOOLING
 }
 
 data class RootIndicator(

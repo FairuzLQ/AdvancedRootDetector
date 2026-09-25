@@ -25,6 +25,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        RootDetector.loggingEnabled = true  // demo app: keep logcat export (adb logcat -s RootDetector:I)
         setContentView(buildLoadingLayout())
     }
 
@@ -100,6 +101,12 @@ class MainActivity : AppCompatActivity() {
                 Thread.sleep(180L + i * 40L)
             }
 
+            // Lab mode (used by .github/workflows/lab.yml): optional delay so an injector
+            // (Frida, jdb) can attach first, then the result is written as JSON.
+            val labOut = intent?.getStringExtra(EXTRA_LAB_OUT)
+            val labDelay = intent?.getLongExtra(EXTRA_LAB_DELAY_MS, 0L) ?: 0L
+            if (labOut != null && labDelay > 0) Thread.sleep(labDelay)
+
             val result = try {
                 RootDetector.scan(this)
             } catch (e: Throwable) {
@@ -107,6 +114,7 @@ class MainActivity : AppCompatActivity() {
                 return@execute
             }
 
+            if (labOut != null) writeLabResult(labOut, result)
             mainHandler.post { showResult(result) }
         }
 
@@ -150,7 +158,8 @@ class MainActivity : AppCompatActivity() {
             RiskLevel.CRITICAL -> Color.parseColor("#B71C1C")
             RiskLevel.HIGH     -> Color.parseColor("#BF360C")
             RiskLevel.MEDIUM   -> Color.parseColor("#F57F17")
-            RiskLevel.LOW      -> Color.parseColor("#1B5E20")
+            RiskLevel.LOW,
+            RiskLevel.INFO     -> Color.parseColor("#1B5E20")
         }
         val verdictCard = cardView(root, verdictBg, padV = 28)
 
@@ -192,6 +201,7 @@ class MainActivity : AppCompatActivity() {
                 indicators.any { it.risk == RiskLevel.CRITICAL } -> Color.parseColor("#EF5350")
                 indicators.any { it.risk == RiskLevel.HIGH }     -> Color.parseColor("#FF7043")
                 indicators.any { it.risk == RiskLevel.MEDIUM }   -> Color.parseColor("#FFA726")
+                indicators.all { it.risk == RiskLevel.INFO }     -> Color.parseColor("#78909C")
                 else                                              -> Color.parseColor("#66BB6A")
             }
 
@@ -248,6 +258,7 @@ class MainActivity : AppCompatActivity() {
             RiskLevel.HIGH     -> Color.parseColor("#FF7043")
             RiskLevel.MEDIUM   -> Color.parseColor("#FFCA28")
             RiskLevel.LOW      -> Color.parseColor("#66BB6A")
+            RiskLevel.INFO     -> Color.parseColor("#78909C")
         }
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -293,6 +304,33 @@ class MainActivity : AppCompatActivity() {
         }
         parent.addView(card)
         return card
+    }
+
+    private fun writeLabResult(fileName: String, result: DetectionResult) {
+        val json = org.json.JSONObject().apply {
+            put("isRooted", result.isRooted)
+            put("riskScore", result.riskScore)
+            put("sdk", android.os.Build.VERSION.SDK_INT)
+            put("indicators", org.json.JSONArray().apply {
+                result.indicators.forEach { ind ->
+                    put(org.json.JSONObject().apply {
+                        put("id", ind.id)
+                        put("category", ind.category.name)
+                        put("risk", ind.risk.name)
+                        put("title", ind.title)
+                        put("evidence", org.json.JSONArray(ind.evidence.take(6)))
+                    })
+                }
+            })
+        }
+        // filesDir only accepts a plain name — no path traversal from the intent extra.
+        java.io.File(filesDir, java.io.File(fileName).name).writeText(json.toString(2))
+        android.util.Log.i("RDLAB", "RDLAB_DONE ${result.indicators.size}")
+    }
+
+    companion object {
+        const val EXTRA_LAB_OUT = "lab_out"
+        const val EXTRA_LAB_DELAY_MS = "lab_delay_ms"
     }
 
     override fun onDestroy() {

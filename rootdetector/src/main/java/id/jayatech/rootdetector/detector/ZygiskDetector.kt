@@ -4,6 +4,7 @@ import android.content.Context
 import id.jayatech.rootdetector.model.DetectorCategory
 import id.jayatech.rootdetector.model.RiskLevel
 import id.jayatech.rootdetector.model.RootIndicator
+import id.jayatech.rootdetector.rules.Rules
 
 /**
  * Detects Zygisk and standalone Zygisk variants:
@@ -13,7 +14,7 @@ import id.jayatech.rootdetector.model.RootIndicator
  *  - Shamiko (Zygisk module to hide Magisk from DenyList targets)
  *  - NeoZygisk
  */
-internal class ZygiskDetector(context: Context) : BaseDetector(context) {
+internal class ZygiskDetector(context: Context, props: PropSnapshot = PropSnapshot()) : BaseDetector(context, props) {
 
     /**
      * FALSE POSITIVE notes on removed packages:
@@ -34,6 +35,7 @@ internal class ZygiskDetector(context: Context) : BaseDetector(context) {
         "/dev/socket/zygisk_1",
         // ZygiskNext / ReZygisk module dirs
         "/data/adb/modules/zygisknext",
+        "/data/adb/modules/zygisksu",          // ZygiskNext module id
         "/data/adb/zygisk",
         "/data/adb/modules/rezygisk",
         "/dev/socket/rezygisk",
@@ -75,6 +77,7 @@ internal class ZygiskDetector(context: Context) : BaseDetector(context) {
 
         detectZygiskMaps()?.let { findings += it }
         detectShamiko()?.let { findings += it }
+        detectHideModules()?.let { findings += it }
 
         val prop = readProp("persist.sys.zygisk")
         if (prop == "true" || prop == "1") {
@@ -92,13 +95,9 @@ internal class ZygiskDetector(context: Context) : BaseDetector(context) {
     }
 
     private fun detectZygiskMaps(): RootIndicator? {
-        val patterns = listOf("zygisk", "shamiko", "rezygisk", "lspatch_loader")
-        val evidence = mutableListOf<String>()
-        try {
-            java.io.File("/proc/self/maps").readLines().forEach { line ->
-                if (patterns.any { line.contains(it, ignoreCase = true) }) evidence += line.trim()
-            }
-        } catch (_: Exception) {}
+        val evidence = try {
+            Rules.zygiskMapsLines(java.io.File("/proc/self/maps").readLines())
+        } catch (_: Exception) { emptyList() }
         return if (evidence.isNotEmpty()) RootIndicator(
             id = "zygisk_maps",
             category = DetectorCategory.ZYGISK,
@@ -117,6 +116,32 @@ internal class ZygiskDetector(context: Context) : BaseDetector(context) {
             category = DetectorCategory.ZYGISK,
             title = "Shamiko Hide Module Active",
             detail = "Shamiko is installed — Magisk is being actively hidden from DenyList targets",
+            risk = RiskLevel.CRITICAL,
+            evidence = found
+        ) else null
+    }
+
+    /**
+     * Integrity-spoofing / hiding modules that only exist on rooted devices.
+     * Visible only when /data/adb leaks into our namespace, but zero false-positive risk.
+     */
+    private fun detectHideModules(): RootIndicator? {
+        val paths = listOf(
+            "/data/adb/tricky_store",                  // TrickyStore (keybox / attestation spoof)
+            "/data/adb/modules/tricky_store",
+            "/data/adb/modules/playintegrityfix",      // Play Integrity Fix
+            "/data/adb/modules/playintegrityfork",
+            "/data/adb/modules/susfs4ksu",             // SUSFS (KernelSU hiding)
+            "/data/adb/susfs4ksu",
+            "/data/adb/modules/zygisk_shamiko",
+            "/data/adb/modules/treat_wheel",           // Treat Wheel (hiding)
+        )
+        val found = paths.filter { fileExists(it) }
+        return if (found.isNotEmpty()) RootIndicator(
+            id = "zygisk_hide_modules",
+            category = DetectorCategory.ZYGISK,
+            title = "Root-Hiding / Integrity-Spoof Module",
+            detail = "TrickyStore, Play Integrity Fix, SUSFS or similar hiding module is installed",
             risk = RiskLevel.CRITICAL,
             evidence = found
         ) else null

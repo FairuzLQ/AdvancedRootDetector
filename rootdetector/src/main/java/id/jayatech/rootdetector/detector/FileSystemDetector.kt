@@ -4,8 +4,9 @@ import android.content.Context
 import id.jayatech.rootdetector.model.DetectorCategory
 import id.jayatech.rootdetector.model.RiskLevel
 import id.jayatech.rootdetector.model.RootIndicator
+import id.jayatech.rootdetector.rules.Rules
 
-internal class FileSystemDetector(context: Context) : BaseDetector(context) {
+internal class FileSystemDetector(context: Context, props: PropSnapshot = PropSnapshot()) : BaseDetector(context, props) {
 
     private val rootApkPaths = listOf(
         "/system/app/Superuser.apk",
@@ -121,17 +122,12 @@ internal class FileSystemDetector(context: Context) : BaseDetector(context) {
      *    name their files "frida-server", "magisk", "ksud", etc.
      */
     private fun detectRootExecutablesInTmp(): RootIndicator? {
-        val rootToolNames = listOf(
-            "frida", "frida-server", "magisk", "ksud", "ksu", "apd", "su",
-            "daemonsu", "busybox_frida", "objection"
-        )
+        // Exact name or name + separator ("frida-server-16.5") — plain startsWith("su")
+        // used to flag files like "summary.txt" or "support.log".
         val evidence = mutableListOf<String>()
         try {
             java.io.File("/data/local/tmp").listFiles()?.forEach { f ->
-                val name = f.name.lowercase()
-                if (rootToolNames.any { name.startsWith(it) || name == it }) {
-                    evidence += f.absolutePath
-                }
+                if (Rules.isRootToolFileName(f.name)) evidence += f.absolutePath
             }
         } catch (_: Exception) {}
         return if (evidence.isNotEmpty()) RootIndicator(

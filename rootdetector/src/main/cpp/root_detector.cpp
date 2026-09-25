@@ -25,17 +25,14 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
+#include "signatures.h"
+
 #define TAG "RDNative"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 
 // =============================================================================
 // Helpers
 // =============================================================================
-
-static bool file_exists_libc(const char* path) {
-    struct stat st{};
-    return stat(path, &st) == 0;
-}
 
 // Portable stat via direct syscall — bypasses libc hooks on the fstatat family.
 // __NR_newfstatat (arm64/x86_64=262, arm64=79) vs __NR_fstatat64 (arm32=327, x86=300)
@@ -50,23 +47,6 @@ static bool file_exists_syscall(const char* path) {
 #endif
 }
 
-static std::string read_file(const char* path) {
-    std::ifstream f(path);
-    if (!f.is_open()) return {};
-    std::ostringstream ss;
-    ss << f.rdbuf();
-    return ss.str();
-}
-
-static std::string str_lower(const std::string& s) {
-    std::string r = s;
-    for (auto& c : r) c = (char)tolower((unsigned char)c);
-    return r;
-}
-
-static bool str_contains_lower(const std::string& hay, const char* needle) {
-    return str_lower(hay).find(needle) != std::string::npos;
-}
 
 // =============================================================================
 // 1. ENHANCED /proc/self/maps analysis
@@ -77,54 +57,14 @@ static bool str_contains_lower(const std::string& hay, const char* needle) {
 //    - Only flag anonymous paths (injected code not from any file)
 // =============================================================================
 
-static const char* SYSTEM_PREFIXES[] = {
-    "/system/", "/apex/", "/vendor/", "/product/", "/odm/",
-    "/data/dalvik-cache/", "/data/app/", nullptr
-};
-
-static bool is_system_path(const std::string& path) {
-    for (int i = 0; SYSTEM_PREFIXES[i]; i++) {
-        if (path.find(SYSTEM_PREFIXES[i]) == 0) return true;
-    }
-    return false;
-}
-
-static const char* SUSPICIOUS_PATTERNS[] = {
-    "magisk", "zygisk", "shamiko", "lspd", "lspatch",
-    "xposed", "riru", "frida", "objection", "ksu", "apatch",
-    "rezygisk", "zygnext", "dreamland", "pine_bridge",
-    nullptr
-};
-
+// Filtering + patterns live in signatures.h (sig::is_suspicious_maps_line).
 static std::vector<std::string> scan_maps_suspicious_libs() {
     std::vector<std::string> hits;
     std::ifstream maps("/proc/self/maps");
     if (!maps.is_open()) return hits;
-
     std::string line;
     while (std::getline(maps, line)) {
-        // Extract the pathname (last column, if present)
-        size_t pos = 0;
-        for (int fields = 0; fields < 5 && pos < line.size(); fields++) {
-            while (pos < line.size() && line[pos] == ' ') pos++;
-            while (pos < line.size() && line[pos] != ' ') pos++;
-        }
-        while (pos < line.size() && line[pos] == ' ') pos++;
-        std::string path = (pos < line.size()) ? line.substr(pos) : "";
-
-        // Skip system/framework paths — they are signed and legitimate
-        if (!path.empty() && is_system_path(path)) continue;
-        // Skip well-known anonymous segments
-        if (path == "[stack]" || path == "[heap]" || path == "[vvar]" ||
-            path == "[vdso]" || path == "[vsyscall]") continue;
-
-        std::string lower = str_lower(line);
-        for (int i = 0; SUSPICIOUS_PATTERNS[i]; i++) {
-            if (lower.find(SUSPICIOUS_PATTERNS[i]) != std::string::npos) {
-                hits.push_back(line);
-                break;
-            }
-        }
+        if (sig::is_suspicious_maps_line(line)) hits.push_back(line);
     }
     return hits;
 }
@@ -297,15 +237,7 @@ static bool probe_frida_port() {
         if (!tcp.is_open()) continue;
         std::string line;
         while (std::getline(tcp, line)) {
-            // local_address field: "IP:PORT" — port is last 4 hex chars before space
-            // e.g. "00000000:69A2 ..."
-            size_t colon = line.find(':');
-            if (colon == std::string::npos) continue;
-            // Port is the 4 chars after the colon
-            std::string port_hex = line.substr(colon + 1, 4);
-            // Normalise to upper
-            for (auto& c : port_hex) c = (char)toupper((unsigned char)c);
-            if (port_hex == "69A2") return true;
+            if (sig::tcp_local_port_is(line, "69A2")) return true;
         }
     }
     return false;
@@ -450,10 +382,7 @@ static std::vector<std::string> check_function_interposition() {
         Dl_info info{};
         if (!dladdr(sym, &info) || !info.dli_fname) continue;
         const char* fname = info.dli_fname;
-        bool ok = strstr(fname, "/system/") || strstr(fname, "/apex/") ||
-                  strstr(fname, "/bionic/") || strstr(fname, "/lib/") ||
-                  strstr(fname, "linker");
-        if (!ok) {
+        if (sig::is_foreign_symbol_owner(fname)) {
             char buf[256];
             snprintf(buf, sizeof(buf), "%s() owned by non-system lib: %s", funcs[i], fname);
             hits.push_back(buf);
@@ -472,40 +401,7 @@ static std::vector<std::string> check_function_interposition() {
 static std::vector<std::string> scan_file_descriptors() {
     std::vector<std::string> hits;
 
-    // Paths that are ALWAYS suspicious regardless of context.
-    // These are specific enough that they won't appear in Base64 install hashes.
-    static const char* kSuspiciousPaths[] = {
-        "/data/adb/",      // Magisk/KSU runtime data
-        "/dev/kp",         // APatch kernel device
-        "/dev/apatch",     // APatch device
-        "/memfd:frida",    // Frida gadget in memfd
-        nullptr
-    };
-
-    // Package name prefixes for root managers — matched against the package segment only
-    // (the part before the first '-' in /data/app/~~hash~~/PACKAGE-hash==/...)
-    // Short keywords ("ksu","apd") are NOT used here because APK install hashes are Base64
-    // and can contain these 3-letter sequences by chance, producing false positives.
-    static const char* kRootPkgPrefixes[] = {
-        "com.topjohnwu.magisk",
-        "io.github.huskydg.magisk",
-        "io.github.vvb2060.magisk",
-        "io.github.huskydg.shamiko",
-        "io.github.rezygisk",
-        "com.rnfsd.ksunext",
-        "me.weishu.kernelsu",
-        "io.github.neozsugisk",
-        "com.bmax.apatch",
-        nullptr
-    };
-
-    // Longer keyword patterns safe to search full path — 7+ chars, won't appear in typical hashes
-    static const char* kLongPatterns[] = {
-        "magiskd", "magisk64", "magisk32", "zygisk", "shamiko",
-        "xposed", "edxposed", "lspatch", "frida-agent",
-        nullptr
-    };
-
+    // Matching rules: sig::is_suspicious_fd_target (signatures.h).
     DIR* dir = opendir("/proc/self/fd");
     if (!dir) return hits;
     dirent* entry;
@@ -517,41 +413,7 @@ static std::vector<std::string> scan_file_descriptors() {
         ssize_t len = readlink(proc_path, link, sizeof(link) - 1);
         if (len <= 0) continue;
         link[len] = '\0';
-        std::string path_str(link);
-        std::string lower = str_lower(path_str);
-        bool hit = false;
-
-        // 1. Specific always-suspicious paths
-        for (int i = 0; kSuspiciousPaths[i] && !hit; i++) {
-            if (lower.find(kSuspiciousPaths[i]) != std::string::npos) hit = true;
-        }
-
-        // 2. Long keyword patterns (safe substring search)
-        for (int i = 0; kLongPatterns[i] && !hit; i++) {
-            if (lower.find(kLongPatterns[i]) != std::string::npos) hit = true;
-        }
-
-        // 3. For /data/app/ paths: extract package segment (before first '-' after last '/')
-        //    and match only against that, not the full path (avoids Base64 hash false positives)
-        if (!hit && lower.find("/data/app/") != std::string::npos) {
-            // Find second-to-last '/' component which is "PACKAGE-HASH=="
-            size_t last_slash = lower.rfind('/');
-            size_t prev_slash = (last_slash > 0) ? lower.rfind('/', last_slash - 1) : std::string::npos;
-            if (prev_slash != std::string::npos) {
-                std::string pkg_segment = lower.substr(prev_slash + 1, last_slash - prev_slash - 1);
-                // Package segment is "com.package.name-base64hash==". Extract just the package name.
-                size_t dash_pos = pkg_segment.find('-');
-                std::string pkg_name = (dash_pos != std::string::npos)
-                                       ? pkg_segment.substr(0, dash_pos)
-                                       : pkg_segment;
-                for (int i = 0; kRootPkgPrefixes[i] && !hit; i++) {
-                    if (pkg_name.find(kRootPkgPrefixes[i]) != std::string::npos) hit = true;
-                }
-                // Also check if pkg_name itself has ksu/ksud explicitly (e.g. com.rnfsd.ksunext)
-                if (!hit && (pkg_name.find("ksunext") != std::string::npos ||
-                             pkg_name.find("kernelsu") != std::string::npos)) hit = true;
-            }
-        }
+        bool hit = sig::is_suspicious_fd_target(link);
 
         if (hit) {
             char buf[PATH_MAX + 32];
@@ -569,21 +431,11 @@ static std::vector<std::string> scan_file_descriptors() {
 
 static std::vector<std::string> scan_unix_sockets() {
     std::vector<std::string> hits;
-    const char* patterns[] = {
-        "@magisk", "/.magisk", "/magisk.", "zygisk", "ksu", "apatch",
-        "apd", "ksud", "shamiko", nullptr
-    };
     std::ifstream f("/proc/net/unix");
     if (!f.is_open()) return hits;
     std::string line;
     while (std::getline(f, line)) {
-        std::string lower = str_lower(line);
-        for (int i = 0; patterns[i]; i++) {
-            if (lower.find(patterns[i]) != std::string::npos) {
-                hits.push_back(line.substr(0, 120)); // cap length
-                break;
-            }
-        }
+        if (sig::is_root_unix_socket(line)) hits.push_back(line.substr(0, 120)); // cap length
     }
     return hits;
 }
@@ -635,7 +487,7 @@ static std::vector<std::string> find_ghost_libraries() {
         seen.insert(path);
 
         // Skip system paths
-        if (is_system_path(path)) continue;
+        if (sig::is_system_path(path)) continue;
         // Skip known app paths
         if (path.find("/data/app/") != std::string::npos) continue;
         if (path.find("rootdetector") != std::string::npos) continue;
@@ -643,34 +495,11 @@ static std::vector<std::string> find_ghost_libraries() {
         // Not registered with the linker → ghost injection
         if (linker_libs.find(path) == linker_libs.end()) {
             // Double-check it has suspicious name to reduce noise
-            std::string lower = str_lower(path);
-            for (int i = 0; SUSPICIOUS_PATTERNS[i]; i++) {
-                if (lower.find(SUSPICIOUS_PATTERNS[i]) != std::string::npos) {
-                    ghosts.push_back("GHOST: " + path);
-                    break;
-                }
-            }
+            if (sig::has_suspicious_name(sig::lower(path)))
+                ghosts.push_back("GHOST: " + path);
         }
     }
     return ghosts;
-}
-
-// =============================================================================
-// 14. /proc/self/status — check for UID=0, suspicious security attrs
-// =============================================================================
-
-static std::string get_status_field(const char* field) {
-    std::ifstream f("/proc/self/status");
-    std::string line;
-    size_t flen = strlen(field);
-    while (std::getline(f, line)) {
-        if (line.compare(0, flen, field) == 0) {
-            std::string v = line.substr(flen);
-            v.erase(0, v.find_first_not_of(" \t:"));
-            return v;
-        }
-    }
-    return "";
 }
 
 // =============================================================================
@@ -678,41 +507,13 @@ static std::string get_status_field(const char* field) {
 // Custom root kernels (KernelSU, Kitsune, APatch) often leave strings here.
 // =============================================================================
 static std::vector<std::string> check_kernel_version_strings() {
-    std::vector<std::string> hits;
     std::ifstream f("/proc/version");
-    if (!f.is_open()) return hits;
+    if (!f.is_open()) return {};
     std::string ver;
     std::getline(f, ver);
-    f.close();
-    if (ver.empty()) return hits;
 
-    // Strings that directly identify a root-modified kernel
-    static const char* kRootStrings[] = {
-        "ksu", "kernelsu", "kitsune", "apatch",
-        "magisk", "userdebug", "test-keys",
-        nullptr
-    };
-    // Known custom Android kernel projects — high correlation with root
-    // (not proof alone, but combined with other signals → strong indicator)
-    static const char* kCustomKernels[] = {
-        "blu-spark", "sultan", "arter97", "kali", "nexkernel",
-        "proton", "darkhorse", "immensity", "elementalx",
-        nullptr
-    };
-
-    std::string lower = ver;
-    for (char& c : lower) c = (char)tolower((unsigned char)c);
-
-    for (int i = 0; kRootStrings[i]; i++) {
-        if (lower.find(kRootStrings[i]) != std::string::npos)
-            hits.push_back(std::string(kRootStrings[i]) + " in /proc/version: " + ver);
-    }
-    // Custom kernels: prefix with "CUSTOM_KERNEL:" to distinguish risk level in Java
-    for (int i = 0; kCustomKernels[i]; i++) {
-        if (lower.find(kCustomKernels[i]) != std::string::npos)
-            hits.push_back(std::string("CUSTOM_KERNEL:") + kCustomKernels[i] + " in /proc/version: " + ver);
-    }
-    return hits;
+    // Matching rules (token-safe for short names): sig::kernel_version_hits.
+    return sig::kernel_version_hits(ver);
 }
 
 // =============================================================================
@@ -852,25 +653,7 @@ static std::vector<std::string> scan_proc_for_root_daemons() {
 static std::vector<std::string> find_unknown_root_processes() {
     std::vector<std::string> hits;
 
-    // Known legitimate UID-0 process name prefixes on AOSP/Qualcomm/MediaTek devices.
-    // A process NOT matching any of these prefix is suspicious.
-    static const char* kKnown[] = {
-        "init", "kthreadd", "kswapd", "migration", "watchdog", "kworker",
-        "ksoftirqd", "kcompactd", "rcu_", "netns", "khungtaskd", "oom_reaper",
-        "writeback", "kdevtmpfs", "kblockd", "bioset", "kcopyd", "deferwq",
-        "vmstat", "jbd2", "ext4-", "f2fs_", "zygote", "zygote64",
-        "surfaceflinger", "system_server", "logd", "logcat",
-        "vold", "netd", "adbd", "lmkd", "ueventd", "servicemanager",
-        "hwservicemanager", "vndservicemanager", "audioserver", "mediaserver",
-        "cameraserver", "drmserver", "wificond", "installd", "sdcard",
-        "keystore", "gatekeeperd", "fingerprintd", "healthd", "thermal",
-        "debuggerd", "tombstoned", "incidentd", "mdnsd", "rild",
-        "dumpstate", "perfprofd", "storaged", "statsd",
-        "ipv6proxy", "netmgrd", "qmuxd", "qti", "diag", "ims", "mcDriverDaemon",
-        "ps", "ls", "sh", "cat", "grep", "getprop",  // transient shell commands
-        nullptr
-    };
-
+    // Whitelist + kernel-thread filtering: sig::classify_uid0_status (signatures.h).
     DIR* dir = opendir("/proc");
     if (!dir) return hits;
 
@@ -891,53 +674,8 @@ static std::vector<std::string> find_unknown_root_processes() {
         close(fd);
         if (n <= 0) continue;
 
-        // Parse "Uid:\t<real>\t..." — real UID is first value.
-        // Use strchr to find ':' so we work correctly whether the match came
-        // from "\nUid:" (pointer at '\n') or "Uid:" (pointer at 'U').
-        char* uid_p = strstr(buf, "\nUid:");
-        if (!uid_p) uid_p = strstr(buf, "Uid:");
-        if (!uid_p) continue;
-        uid_p = strchr(uid_p, ':'); // advance to the ':' in "Uid:"
-        if (!uid_p) continue;
-        uid_p++; // skip ':'
-        while (*uid_p == '\t' || *uid_p == ' ') uid_p++;
-        if (atoi(uid_p) != 0) continue; // not root
-
-        // Parse "Name:\t..." field
-        char comm[32] = {};
-        char* name_p = strstr(buf, "Name:");
-        if (name_p) {
-            name_p += 5;
-            while (*name_p == '\t' || *name_p == ' ') name_p++;
-            int i = 0;
-            while (name_p[i] && name_p[i] != '\n' && i < 31) {
-                comm[i] = name_p[i]; i++;
-            }
-            comm[i] = 0;
-        }
-
-        if (comm[0] == '\0') {
-            hits.push_back("UID0 PID=" + std::string(pid) + " (Name unreadable — suspicious)");
-            continue;
-        }
-
-        bool known = false;
-        for (int k = 0; kKnown[k]; k++) {
-            if (strncmp(comm, kKnown[k], strlen(kKnown[k])) == 0) {
-                known = true;
-                break;
-            }
-        }
-
-        if (!known) {
-            // Also check if it looks like a kernel thread [brackets]
-            if (comm[0] == '[') known = true;
-        }
-
-        if (!known) {
-            hits.push_back("Unknown UID0 process: " + std::string(comm) +
-                           " (PID " + std::string(pid) + ")");
-        }
+        std::string hit = sig::classify_uid0_status(std::string(buf, (size_t)n), pid);
+        if (!hit.empty()) hits.push_back(hit);
     }
     closedir(dir);
     return hits;
@@ -1100,7 +838,7 @@ static std::vector<std::string> detect_emulator_native() {
     // Not intercepted by Java Runtime.exec() hook; separate function pointer.
     char prop[96] = {};
     if (__system_property_get("ro.hardware", prop) > 0) {
-        std::string hw = str_lower(std::string(prop));
+        std::string hw = sig::lower(std::string(prop));
         if (hw == "goldfish" || hw == "ranchu" || hw.substr(0, 4) == "vbox")
             hits.push_back(std::string("ro.hardware=") + prop);
     }
@@ -1110,7 +848,7 @@ static std::vector<std::string> detect_emulator_native() {
 
     memset(prop, 0, sizeof(prop));
     if (__system_property_get("ro.product.model", prop) > 0) {
-        std::string model = str_lower(std::string(prop));
+        std::string model = sig::lower(std::string(prop));
         if (model.find("android sdk built for") != std::string::npos ||
             model == "emulator" || model == "google_sdk")
             hits.push_back(std::string("ro.product.model=") + prop);
@@ -1132,7 +870,7 @@ static std::vector<std::string> detect_emulator_native() {
             ssize_t n = read(fd, cpu_buf, (int)sizeof(cpu_buf) - 1);
             close(fd);
             if (n > 0) {
-                std::string cpu = str_lower(std::string(cpu_buf, (size_t)n));
+                std::string cpu = sig::lower(std::string(cpu_buf, (size_t)n));
                 if (cpu.find("goldfish") != std::string::npos)
                     hits.push_back("cpuinfo:Hardware=Goldfish (QEMU AVD)");
                 else if (cpu.find("ranchu") != std::string::npos)
@@ -1275,9 +1013,15 @@ Java_id_jayatech_rootdetector_detector_NativeDetector_nativeScan(JNIEnv* env, jo
         results.push_back("UNIX_SOCKET:" + s);
 
     jclass strCls = env->FindClass("java/lang/String");
-    jobjectArray arr = env->NewObjectArray((jsize)results.size(), strCls, env->NewStringUTF(""));
-    for (int i = 0; i < (int)results.size(); i++)
-        env->SetObjectArrayElement(arr, i, env->NewStringUTF(results[i].c_str()));
+    jobjectArray arr = env->NewObjectArray((jsize)results.size(), strCls, nullptr);
+    if (!arr) return nullptr;
+    for (int i = 0; i < (int)results.size(); i++) {
+        // jni_safe: raw /proc data is not guaranteed Modified UTF-8 (CheckJNI would abort).
+        jstring js = env->NewStringUTF(sig::jni_safe(results[i]).c_str());
+        if (!js) continue;
+        env->SetObjectArrayElement(arr, i, js);
+        env->DeleteLocalRef(js);  // results can exceed the local reference table limit
+    }
     return arr;
 }
 

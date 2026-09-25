@@ -8,7 +8,7 @@ import id.jayatech.rootdetector.model.DetectorCategory
 import id.jayatech.rootdetector.model.RiskLevel
 import id.jayatech.rootdetector.model.RootIndicator
 
-internal class EmulatorDetector(context: Context) : BaseDetector(context) {
+internal class EmulatorDetector(context: Context, props: PropSnapshot = PropSnapshot()) : BaseDetector(context, props) {
 
     override fun detect(): List<RootIndicator> {
         val findings = mutableListOf<RootIndicator>()
@@ -139,8 +139,8 @@ internal class EmulatorDetector(context: Context) : BaseDetector(context) {
     }
 
     /**
-     * Real physical Android devices (especially Android 8+) always have accelerometer +
-     * gyroscope. Most emulators either have zero sensors or fake sensors with telltale
+     * Real physical Android phones always have an accelerometer (a gyroscope is NOT
+     * guaranteed on budget devices). Most emulators either have zero sensors or fake sensors with telltale
      * vendor/name strings.
      *
      * This is a MEDIUM signal only — some emulators now ship good sensor simulation.
@@ -152,14 +152,17 @@ internal class EmulatorDetector(context: Context) : BaseDetector(context) {
                 ?: return null
             val evidence = mutableListOf<String>()
 
-            if (sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) == null)
-                evidence += "No accelerometer (all real Android 8+ devices have one)"
-
-            if (sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE) == null)
-                evidence += "No gyroscope (all real Android 8+ devices have one)"
+            val accel = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+            if (accel == null) {
+                evidence += "No accelerometer (all real Android phones have one)"
+                // A missing gyroscope is only supporting evidence: many budget phones
+                // (e.g. Samsung Galaxy A0x/A1x, Redmi A-series) ship without one, so it
+                // must never raise an indicator on its own.
+                if (sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE) == null)
+                    evidence += "No gyroscope"
+            }
 
             // Emulator sensors often have vendor="unknown" or "AOSP" rather than real chip names
-            val accel = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
             if (accel != null && (accel.vendor.equals("unknown", true) ||
                 accel.vendor.equals("AOSP", true))) {
                 evidence += "Accelerometer vendor='${accel.vendor}' (real chip has manufacturer name)"

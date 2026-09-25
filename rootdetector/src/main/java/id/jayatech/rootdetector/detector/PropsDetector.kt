@@ -5,8 +5,9 @@ import android.os.Build
 import id.jayatech.rootdetector.model.DetectorCategory
 import id.jayatech.rootdetector.model.RiskLevel
 import id.jayatech.rootdetector.model.RootIndicator
+import id.jayatech.rootdetector.rules.Rules
 
-internal class PropsDetector(context: Context) : BaseDetector(context) {
+internal class PropsDetector(context: Context, props: PropSnapshot = PropSnapshot()) : BaseDetector(context, props) {
 
     override fun detect(): List<RootIndicator> {
         val findings = mutableListOf<RootIndicator>()
@@ -111,16 +112,6 @@ internal class PropsDetector(context: Context) : BaseDetector(context) {
     }
 
     /**
-     * Bootloader state detection.
-     *
-     * FALSE POSITIVE notes:
-     *  - "yellow" = custom key, seen on some OEM devices with special signing (not root).
-     *  - "orange" = unlocked bootloader. Many developers unlock legally without root.
-     *  - Unlocked bootloader ≠ rooted, but is a prerequisite for most root methods.
-     *  - Risk: MEDIUM (bootloader unlocked is suspicious context, not proof).
-     *  - "green" = fully locked and verified — safe.
-     */
-    /**
      * Magisk/Kitsune/KSU set runtime props during init scripts.
      * DenyList only isolates mount namespaces — it does NOT clean system props.
      * Props live in kernel shared memory (/dev/__properties__) and are immune to DenyList.
@@ -137,17 +128,12 @@ internal class PropsDetector(context: Context) : BaseDetector(context) {
         )
         val evidence = mutableListOf<String>()
 
-        // One subprocess dumps all props — parse directly instead of N getprop calls.
-        // getprop piped to grep is fast; 3 s timeout is generous for old devices.
-        // IMPORTANT: avoid short patterns like "ksu" — they match substrings in unrelated props
-        // (e.g. "ro.boot.emmc_checksum" contains "ksu"). Use "kernelsu" or full prop names instead.
-        val grepOut = runShellCommand(
-            "getprop | grep -iE 'magisk|zygisk|kitsune|apatch|kernelsu|supersu'",
-            timeoutMs = 3000
-        )
-        grepOut.lines().filter { it.isNotBlank() }.take(8).forEach { evidence += it.trim() }
+        // The per-scan getprop snapshot (one subprocess) is matched in-process — no extra
+        // `getprop | grep` fork. Short patterns like "ksu" are deliberately NOT used: they
+        // match unrelated props (e.g. "ro.boot.emmc_checksum" contains "ksu").
+        Rules.rootRuntimeProps(props.asMap()).take(8).forEach { evidence += it }
 
-        // Also check specific keys in case grep fails or prop has unusual format
+        // Also check specific keys in case the snapshot missed them
         for (key in directProps) {
             val v = readProp(key)
             if (v.isNotEmpty() && !evidence.any { it.contains(key) }) evidence += "$key=$v"
@@ -163,6 +149,16 @@ internal class PropsDetector(context: Context) : BaseDetector(context) {
         ) else null
     }
 
+    /**
+     * Bootloader state detection.
+     *
+     * FALSE POSITIVE notes:
+     *  - "yellow" = custom key, seen on some OEM devices with special signing (not root).
+     *  - "orange" = unlocked bootloader. Many developers unlock legally without root.
+     *  - Unlocked bootloader ≠ rooted, but is a prerequisite for most root methods.
+     *  - Risk: MEDIUM (bootloader unlocked is suspicious context, not proof).
+     *  - "green" = fully locked and verified — safe.
+     */
     private fun detectBootloaderState(): RootIndicator? {
         val evidence = mutableListOf<String>()
         var risk = RiskLevel.LOW

@@ -4,8 +4,9 @@ import android.content.Context
 import id.jayatech.rootdetector.model.DetectorCategory
 import id.jayatech.rootdetector.model.RiskLevel
 import id.jayatech.rootdetector.model.RootIndicator
+import id.jayatech.rootdetector.rules.Rules
 
-internal class MagiskDetector(context: Context) : BaseDetector(context) {
+internal class MagiskDetector(context: Context, props: PropSnapshot = PropSnapshot()) : BaseDetector(context, props) {
 
     private val magiskPackages = listOf(
         "com.topjohnwu.magisk",
@@ -122,20 +123,9 @@ internal class MagiskDetector(context: Context) : BaseDetector(context) {
      * component uses this name. Zygisk sockets are handled by ZygiskDetector.
      */
     private fun detectMagiskSocket(): RootIndicator? {
-        val evidence = mutableListOf<String>()
-        try {
-            val lines = java.io.File("/proc/net/unix").readLines()
-            for (line in lines) {
-                // Only match "magisk" specifically — avoid "zygisk" here (handled separately)
-                // and avoid overly broad patterns
-                val lower = line.lowercase()
-                if (lower.contains("@magisk") || lower.contains("/.magisk") ||
-                    lower.endsWith("magisk") || lower.contains("/magisk.")
-                ) {
-                    evidence += line.trim()
-                }
-            }
-        } catch (_: Exception) {}
+        val evidence = try {
+            Rules.magiskSocketLines(java.io.File("/proc/net/unix").readLines())
+        } catch (_: Exception) { emptyList() }
         return if (evidence.isNotEmpty()) RootIndicator(
             id = "magisk_socket",
             category = DetectorCategory.MAGISK,
@@ -217,7 +207,7 @@ internal class MagiskDetector(context: Context) : BaseDetector(context) {
      * and search the DEX for Magisk-specific strings in the string pool.
      */
     private fun detectRenamedMagiskApk(): RootIndicator? {
-        val pmOutput = runShellCommand("pm list packages -3 -f 2>/dev/null", timeoutMs = 5000)
+        val pmOutput = runShellCommand("pm list packages -u -3 -f 2>/dev/null", timeoutMs = 5000)
         if (pmOutput.isBlank()) return null
 
         val magiskSigs = listOf(
@@ -295,7 +285,7 @@ internal class MagiskDetector(context: Context) : BaseDetector(context) {
             "ps -A 2>/dev/null | grep -iE 'magiskd|magisk64|magisk32|ksud|apd|kpatch'",
             timeoutMs = 3000
         )
-        psOutput.lines().filter { it.isNotBlank() }.take(5).forEach { evidence += "ps: $it" }
+        Rules.rootDaemonPsLines(psOutput).take(5).forEach { evidence += "ps: $it" }
 
         // Approach B: cat /proc/*/comm via shell glob — one subprocess reads ALL comm files.
         // Even if native open() per-PID is slow, shell glob is batched efficiently.
@@ -304,11 +294,7 @@ internal class MagiskDetector(context: Context) : BaseDetector(context) {
             "cat /proc/[0-9]*/comm 2>/dev/null | grep -ixE 'magiskd|magisk64|magisk32|ksud|apd'",
             timeoutMs = 3000
         )
-        commOutput.lines()
-            .filter { it.isNotBlank() }
-            .distinct()
-            .take(5)
-            .forEach { evidence += "comm: $it" }
+        Rules.rootDaemonComms(commOutput).take(5).forEach { evidence += "comm: $it" }
 
         return if (evidence.isNotEmpty()) RootIndicator(
             id = "magisk_proc_ps",
@@ -325,11 +311,11 @@ internal class MagiskDetector(context: Context) : BaseDetector(context) {
         // Even with DenyList hiding /sbin from our namespace, the exe symlink
         // for /sbin/magisk64 still shows /sbin/magisk64 via kernel's view.
         val output = runShellCommand(
-            "ls -la /proc/*/exe 2>/dev/null | grep -iE 'magisk|ksud|apd|kitsune'",
+            "ls -la /proc/*/exe 2>/dev/null | grep -iE 'magisk|ksud|apd|kitsune'",  // coarse pre-filter
             timeoutMs = 3000
         )
         if (output.isBlank()) return null
-        val found = output.lines().filter { it.isNotBlank() }.take(5)
+        val found = Rules.rootExeLines(output).take(5)
         return if (found.isNotEmpty()) RootIndicator(
             id = "magisk_exe_proc",
             category = DetectorCategory.MAGISK,
@@ -368,19 +354,10 @@ internal class MagiskDetector(context: Context) : BaseDetector(context) {
     }
 
     private fun detectPackagesViaShell(): RootIndicator? {
-        val output = runShellCommand("pm list packages 2>/dev/null", timeoutMs = 4000)
+        val output = runShellCommand("pm list packages -u 2>/dev/null", timeoutMs = 4000)  // -u: also frozen/hidden apps (Hail, Ice Box)
         if (output.isBlank()) return null
 
-        val targets = listOf(
-            "com.topjohnwu.magisk",
-            "io.github.huskydg.magisk",
-            "io.github.vvb2060.magisk",
-            "io.github.huskydg.magisk.stub",
-            "me.weishu.kernelsu",
-            "io.github.huskydg.shamiko",
-            "io.github.rezygisk",
-        )
-        val found = targets.filter { output.contains("package:$it") }
+        val found = Rules.rootPackagesInPmList(output)
         return if (found.isNotEmpty()) RootIndicator(
             id = "magisk_pkg_shell",
             category = DetectorCategory.MAGISK,
