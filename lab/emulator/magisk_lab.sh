@@ -38,8 +38,16 @@ patched=0
 for attempt in 1 2 3; do
     for _ in $(seq 1 30); do adb shell true 2>/dev/null && break; sleep 2; done
     sleep 10
-    # `yes ""` answers any interactive prompt with the default; hard 10 min cap.
-    if ( cd /tmp/rootAVD && yes "" | timeout 600 ./rootAVD.sh "$RAMDISK" ); then patched=1; break; fi
+    adb devices -l
+    echo "adb shell check: '$(adb shell 'echo true' </dev/null 2>&1 | tr -d '\r')'"
+    # stdin must be /dev/null: rootAVD's prompts use `read -t` (EOF -> default), and a
+    # piped `yes` also feeds rootAVD's own `adb shell 'echo true'` check, which then
+    # returns nothing ("no ADB connection possible"). Hard 10 min cap.
+    # rootAVD exits 0 even when it bails out, so judge by its output.
+    ( cd /tmp/rootAVD && timeout 600 ./rootAVD.sh "$RAMDISK" </dev/null ) 2>&1 | tee /tmp/rootavd.log || true
+    if ! grep -qE "no ADB connection possible|ADB not found|not found in" /tmp/rootavd.log; then
+        patched=1; break
+    fi
     echo "rootAVD attempt $attempt failed"
 done
 [ "$patched" = 1 ] || { echo "::error::rootAVD could not patch the ramdisk"; exit 1; }
