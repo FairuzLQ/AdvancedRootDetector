@@ -8,6 +8,13 @@
   popped up the root prompt and added ~2 s to every scan (measured in the lab)
 - Lab: Magisk on emulator (rootAVD), Frida hook scenario, API 28–35 matrix, libFuzzer, weekly run
 - Device lab: `CleanDeviceScanTest` on real stock phones via Firebase Test Lab (false-positive gate)
+- False positives found on real phones (Firebase Test Lab) and fixed:
+  - Samsung SC-51C: `ro.boot.selinux=permissive` alone flagged CRITICAL — the kernel still enforces.
+    Now CRITICAL only when `/sys/fs/selinux/enforce` is 0; the boot param alone is INFO
+  - Nothing A069: Key Attestation failing on an unlocked bootloader flagged HIGH "blocked by
+    module" — happens on stock hardware too; now INFO
+  - Pixel 11: attestation-confirmed unlocked bootloader was HIGH; now MEDIUM like `props_bootloader`
+- Hidden-Magisk stub scan: APKs ≤1 MB, at most 25 (MagiskDetector took 2–5 s on real phones)
 
 ## [1.6.0] — Frida & Debugger Detection + False Positive Fixes
 

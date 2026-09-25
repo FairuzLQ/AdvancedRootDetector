@@ -72,10 +72,11 @@ internal class IntegrityDetector(context: Context, props: PropSnapshot = PropSna
                 findings += RootIndicator(
                     id       = "integrity_key_attest",
                     category = DetectorCategory.INTEGRITY,
-                    title    = "Hardware Attestation: Boot Integrity Compromised",
-                    detail   = "TEE Key Attestation ($secStr) directly confirms bootloader is unlocked — " +
-                                "this runs in secure hardware, unreachable by Magisk DenyList or any userspace hook",
-                    risk     = RiskLevel.HIGH,
+                    title    = "Hardware Attestation: Bootloader Unlocked",
+                    detail   = "TEE Key Attestation ($secStr) confirms the bootloader is unlocked — reliable " +
+                                "(secure hardware), but an unlocked bootloader alone is not root. MEDIUM like " +
+                                "props_bootloader; seen on stock, unrooted Test Lab phones (Pixel)",
+                    risk     = RiskLevel.MEDIUM,
                     evidence = listOf(
                         "Attestation source: $secStr",
                         "deviceLocked: ${attest.info.deviceLocked}",
@@ -135,14 +136,15 @@ internal class IntegrityDetector(context: Context, props: PropSnapshot = PropSna
                 findings += RootIndicator(
                     id       = "integrity_attest_blocked",
                     category = DetectorCategory.INTEGRITY,
-                    title    = "Key Attestation Blocked by Module",
-                    detail   = "Key Attestation call threw an exception while bootloader prop shows orange — " +
-                                "a bypass module is actively blocking attestation to hide bootloader state",
-                    risk     = RiskLevel.HIGH,
+                    title    = "Key Attestation Generation Failed",
+                    detail   = "Key Attestation threw while the bootloader is unlocked. A bypass module can cause " +
+                                "this, but so can genuine unlocked devices (seen on a stock Nothing Phone in " +
+                                "Firebase Test Lab) — context only",
+                    risk     = RiskLevel.INFO,
                     evidence = listOf(
                         "ro.boot.verifiedbootstate=orange (unlocked)",
                         "KeyPair generation with setAttestationChallenge: FAILED (exception)",
-                        "Real hardware never fails this call without a bypass module interfering"
+                        "Also observed on stock unlocked hardware — not proof of a bypass"
                     )
                 )
             }

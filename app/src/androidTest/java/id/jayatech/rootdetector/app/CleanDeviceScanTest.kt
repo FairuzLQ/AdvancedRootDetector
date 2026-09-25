@@ -15,8 +15,9 @@ import org.junit.runner.RunWith
  * False-positive gate for real devices (Firebase Test Lab — see lab/firebase/README.md).
  *
  * Test Lab devices are stock and not rooted, so any root indicator here is a false positive.
- * Allowed: INFO indicators (e.g. the test APK is debuggable) and the EMULATOR category when
- * the run happens on a virtual device.
+ * Allowed: INFO indicators (e.g. the test APK is debuggable), the EMULATOR category on virtual
+ * devices, and bootloader-unlocked signals — Test Lab's farm phones are unlocked (verified by
+ * hardware attestation on a Pixel), which is a true fact about the device, not root.
  */
 @RunWith(AndroidJUnit4::class)
 class CleanDeviceScanTest {
@@ -32,7 +33,7 @@ class CleanDeviceScanTest {
         result.indicators.forEach { Log.i(TAG, "[${it.risk}] ${it.id} ${it.evidence.take(3)}") }
 
         val unexpected = result.indicators.filter {
-            it.risk > RiskLevel.INFO && it.category != DetectorCategory.EMULATOR
+            it.risk > RiskLevel.INFO && it.category != DetectorCategory.EMULATOR && it.id !in UNLOCKED_BOOTLOADER
         }
         assertTrue(
             "False positive on stock device $device:\n" + unexpected.joinToString("\n") {
@@ -44,5 +45,6 @@ class CleanDeviceScanTest {
 
     private companion object {
         const val TAG = "RDLAB"
+        val UNLOCKED_BOOTLOADER = setOf("props_bootloader", "integrity_key_attest")
     }
 }

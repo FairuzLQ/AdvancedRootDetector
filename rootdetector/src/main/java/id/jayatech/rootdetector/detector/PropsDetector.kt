@@ -92,23 +92,36 @@ internal class PropsDetector(context: Context, props: PropSnapshot = PropSnapsho
      * or on devices where the kernel was patched to disable it.
      */
     private fun detectSeLinux(): RootIndicator? {
-        val evidence = mutableListOf<String>()
-        try {
-            val enforce = java.io.File("/sys/fs/selinux/enforce").readText().trim()
-            if (enforce == "0") evidence += "SELinux enforce=0 (permissive)"
-        } catch (_: Exception) {}
-
+        val enforce = try {
+            java.io.File("/sys/fs/selinux/enforce").readText().trim()
+        } catch (_: Exception) { "" }
         val bootSelinux = readProp("ro.boot.selinux")
-        if (bootSelinux == "permissive") evidence += "ro.boot.selinux=permissive"
 
-        return if (evidence.isNotEmpty()) RootIndicator(
-            id = "props_selinux",
-            category = DetectorCategory.PROPS,
-            title = "SELinux Not Enforcing",
-            detail = "SELinux is permissive — root exploits run unrestricted. Not seen on any stock ROM.",
-            risk = RiskLevel.CRITICAL,
-            evidence = evidence
-        ) else null
+        // The kernel's live state is the proof. The boot parameter alone is not: Samsung user
+        // builds keep enforcing with androidboot.selinux=permissive (seen on a stock SC-51C in
+        // Firebase Test Lab), so that case is reported as context only.
+        if (enforce == "0") {
+            return RootIndicator(
+                id = "props_selinux",
+                category = DetectorCategory.PROPS,
+                title = "SELinux Not Enforcing",
+                detail = "Kernel reports SELinux permissive — root exploits run unrestricted. Not seen on any stock ROM.",
+                risk = RiskLevel.CRITICAL,
+                evidence = listOfNotNull("SELinux enforce=0 (permissive)",
+                    bootSelinux.takeIf { it == "permissive" }?.let { "ro.boot.selinux=$it" })
+            )
+        }
+        if (bootSelinux == "permissive") {
+            return RootIndicator(
+                id = "props_selinux_boot_param",
+                category = DetectorCategory.PROPS,
+                title = "SELinux Permissive Boot Parameter",
+                detail = "Bootloader passed selinux=permissive; the kernel may still enforce (stock Samsung does)",
+                risk = RiskLevel.INFO,
+                evidence = listOf("ro.boot.selinux=permissive", "enforce=" + enforce.ifEmpty { "unreadable" })
+            )
+        }
+        return null
     }
 
     /**

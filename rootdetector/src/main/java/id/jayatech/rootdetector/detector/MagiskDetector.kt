@@ -233,7 +233,9 @@ internal class MagiskDetector(context: Context, props: PropSnapshot = PropSnapsh
         // Sorting ensures the stub is scanned FIRST even if 100+ apps are installed.
         data class Entry(val apkPath: String, val pkgName: String, val size: Long)
 
-        val MAX_APK_SIZE = 5L * 1024 * 1024  // stub is <2 MB; skip anything larger
+        // The hidden-Magisk stub is tiny; scanning up to 50 APKs of 5 MB took 2–5 s on real phones
+        // (Firebase Test Lab), so only APKs up to 1 MB, at most 25, are opened.
+        val MAX_APK_SIZE = 1L * 1024 * 1024
         val entries = pmOutput.lines()
             .filter { it.startsWith("package:") }
             .mapNotNull { line ->
@@ -250,7 +252,7 @@ internal class MagiskDetector(context: Context, props: PropSnapshot = PropSnapsh
                 Entry(apkPath, pkgName, sz)
             }
             .sortedBy { it.size }
-            .take(50)  // at most 50 small APKs — stub is almost always in first 5
+            .take(25)
 
         for (e in entries) {
             try {
