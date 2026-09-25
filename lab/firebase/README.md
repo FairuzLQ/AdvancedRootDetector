@@ -19,7 +19,9 @@ devices per run and never runs on push, so it stays inside the free quota.
    - *Cloud Testing API*
    - *Cloud Tool Results API*
 3. **Service account** — *IAM & Admin → Service Accounts → Create*:
-   - Role: **Firebase Test Lab Admin** (or *Editor* if you prefer one role)
+   - Roles: **Firebase Test Lab Admin** + **Storage Admin** (the APKs are uploaded to Test
+     Lab's results bucket — without Storage the run fails with
+     `storage.objects.create` denied). Or a single **Editor** role.
    - *Keys → Add key → JSON* → a `.json` file downloads.
 4. **GitHub secret** — repo *Settings → Secrets and variables → Actions → New secret*:
    - Name: `FIREBASE_SERVICE_ACCOUNT`
