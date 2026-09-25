@@ -18,7 +18,10 @@ on:
 
 jobs:
   firebase-test-lab:
-    if: github.event_name != 'push' || contains(github.event.head_commit.message, '[device-lab]')
+    if: >-
+      github.event_name != 'push' ||
+      contains(github.event.head_commit.message, '[device-lab]') ||
+      contains(github.event.head_commit.message, '[device-lab-fetch]')
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -59,7 +62,7 @@ jobs:
         if: steps.creds.outputs.ok == 'true'
 
       - name: Run on real devices
-        if: steps.creds.outputs.ok == 'true'
+        if: steps.creds.outputs.ok == 'true' && !contains(github.event.head_commit.message, '[device-lab-fetch]')
         env:
           FTL_PHYSICAL: ${{ inputs.physical_devices || '3' }}
         run: |
@@ -75,6 +78,19 @@ jobs:
             --timeout 10m \
             --results-history-name "rootdetector-device-lab" \
             --format="table(outcome,axis_value,test_details)" 2>&1 | tee ftl.txt
+      - name: Fetch failure details + RDLAB logcat
+        if: always() && steps.creds.outputs.ok == 'true'
+        run: |
+          # This run's results dir, or (fetch-only mode) the newest dir in the Test Lab bucket.
+          dir=$(grep -oE 'gs://[^] ]+|storage/browser/[^] ]+' ftl.txt 2>/dev/null | head -1 | sed 's#storage/browser/#gs://#')
+          if [ -z "$dir" ]; then
+            bucket="gs://${FTL_BUCKET:-test-lab-371p2zbyfh5mz-jnwqsi6h1x78z}"
+            dir=$(gsutil ls "$bucket/" | sort | tail -1)
+          fi
+          echo "results: $dir"
+          bash lab/firebase/fetch_results.sh "$dir" | tee details.txt
+          { echo "## Device lab details"; echo '```'; head -200 details.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Summary
         if: always() && steps.creds.outputs.ok == 'true'
         run: |
