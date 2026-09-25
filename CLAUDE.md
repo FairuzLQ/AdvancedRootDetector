@@ -60,6 +60,13 @@ Detector/
 ./gradlew :app:assembleDebug             # Build demo APK
 ```
 
+## Release
+1. Bump `versionCode` / `versionName` in `app/build.gradle.kts` and add a `CHANGELOG.md` section
+2. Push tag `vX.Y.Z` (must equal `versionName`) → `.github/workflows/release.yml` builds the
+   release APK + library AAR and publishes a GitHub Release with notes from `CHANGELOG.md`
+3. Signing: repo secrets `RELEASE_KEYSTORE_BASE64` (base64 of the .jks), `RELEASE_KEYSTORE_PASSWORD`,
+   `RELEASE_KEY_ALIAS`, `RELEASE_KEY_PASSWORD`. Without them the APK is signed with a CI debug key
+
 ## Lab
 ```bash
 gradle -p lab/host test          # rules vs fixtures (no Android SDK) → lab/REPORT.md

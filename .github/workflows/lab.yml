@@ -45,10 +45,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Install NDK + CMake
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.1.12297006" "cmake;3.22.1" > /dev/null
-      - name: Build demo APK
+      - name: Build demo APK (debug for the lab, release to catch R8/minify issues)
         run: |
           chmod +x gradlew
-          ./gradlew :app:assembleDebug --no-daemon
+          ./gradlew :app:assembleDebug :app:assembleRelease --no-daemon
       - uses: actions/upload-artifact@v4
         with:
           name: app-debug
@@ -110,6 +110,8 @@ jobs:
     continue-on-error: true
     env:
       SYSIMG: "system-images;android-30;google_apis;x86_64"
+      # avdmanager and emulator must agree on where AVDs live (they did not by default).
+      ANDROID_AVD_HOME: /home/runner/.android/avd
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -122,8 +124,10 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       - name: Create AVD
         run: |
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "$SYSIMG" emulator platform-tools > /dev/null
+          mkdir -p "$ANDROID_AVD_HOME"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "$SYSIMG" emulator platform-tools > /dev/null || true
           echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd -n lab -k "$SYSIMG" --force
+          "$ANDROID_HOME/emulator/emulator" -list-avds
       - name: Root with rootAVD and scan
         timeout-minutes: 30
         run: bash lab/emulator/magisk_lab.sh app-debug.apk lab system-images/android-30/google_apis/x86_64/ramdisk.img

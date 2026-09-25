@@ -10,6 +10,10 @@ out_dir, api = sys.argv[1], sys.argv[2]
 here = os.path.dirname(os.path.abspath(__file__))
 expectations = json.load(open(os.path.join(here, "expectations.json")))
 
+if not os.path.isdir(out_dir):
+    print(f"## Emulator lab — {api}\n\nNo results: the scenarios did not run (see the previous step's log).")
+    sys.exit(1)
+
 lines = [f"## Emulator lab — API {api}", "",
          "| Scenario | Result | isRooted | Score | Indicators |", "|---|---|---|---|---|"]
 details, failed = [], False

@@ -337,7 +337,11 @@ class MainActivity : AppCompatActivity() {
             }.getOrDefault(emptyList())))
         })
         // filesDir only accepts a plain name — no path traversal from the intent extra.
-        java.io.File(filesDir, java.io.File(fileName).name).writeText(json.toString(2))
+        // Written to a temp file and renamed, so the lab never reads a half-written result.
+        val out = java.io.File(filesDir, java.io.File(fileName).name)
+        val tmp = java.io.File(filesDir, out.name + ".tmp")
+        tmp.writeText(json.toString(2))
+        tmp.renameTo(out)
         android.util.Log.i("RDLAB", "RDLAB_DONE ${result.indicators.size}")
     }
 

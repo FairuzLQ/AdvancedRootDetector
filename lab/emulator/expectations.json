@@ -1,21 +1,42 @@
 {
   "_doc": "must = indicator ids that have to fire on the emulator; mustnot = must not fire. Checked by check.py.",
   "baseline": {
-    "must": ["emulator_build_props"],
-    "mustnot": ["debug_frida_threads", "debug_frida_maps", "debug_jdwp", "native_frida_port"]
+    "must": [
+      "emulator_build_props"
+    ],
+    "mustnot": [
+      "debug_frida_threads",
+      "debug_frida_maps",
+      "debug_jdwp",
+      "native_frida_port"
+    ]
   },
   "frida_server": {
     "must": [],
-    "mustnot": ["debug_frida_threads"],
+    "mustnot": [
+      "debug_frida_threads",
+      "debug_frida_maps"
+    ],
     "note": "frida-server only (renamed fs64, not attached). /proc/net/tcp is SELinux-blocked for apps on Android 10+, so FRIDA_PORT is expected to be blind on API 30+."
   },
   "frida_attach": {
-    "must": ["debug_frida_threads"],
-    "mustnot": []
+    "must": [
+      "debug_frida_threads",
+      "debug_frida_maps"
+    ],
+    "mustnot": [
+      "debug_jdwp"
+    ],
+    "note": "Real Frida 17 agent injected by frida-server into the app process (memfd:frida-agent-64.so, gum-js-loop/gmain/gdbus threads)."
   },
   "jdwp_debugger": {
-    "must": ["debug_jdwp"],
-    "mustnot": []
+    "must": [
+      "debug_jdwp"
+    ],
+    "mustnot": [
+      "debug_frida_threads",
+      "debug_frida_maps"
+    ]
   },
   "magisk": {
     "must": [],

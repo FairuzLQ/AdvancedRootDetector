@@ -21,11 +21,13 @@ endlog() { echo "::endgroup::" 2>/dev/null || true; }
 adb wait-for-device
 adb install -r -g "$APK" >/dev/null
 
-# start_app <delay_ms>: launches a lab-mode scan, prints the app PID
+# start_app <scenario> <delay_ms>: launches a lab-mode scan writing files/<scenario>.json,
+# prints the app PID. The result file is unique per scenario and deleted first, so a stale
+# result can never be picked up (logcat -c is unreliable on some images).
 start_app() {
     adb shell am force-stop "$PKG"
-    adb logcat -c
-    adb shell am start -W -n "$PKG/.MainActivity" --es lab_out lab_result.json --el lab_delay_ms "$1" >/dev/null
+    adb shell run-as "$PKG" rm -f "files/$1.json"
+    adb shell am start -W -n "$PKG/.MainActivity" --es lab_out "$1.json" --el lab_delay_ms "$2" >/dev/null
     for _ in $(seq 1 30); do
         pid=$(adb shell pidof "$PKG" | tr -d '\r')
         [ -n "$pid" ] && { echo "$pid"; return 0; }
@@ -34,12 +36,13 @@ start_app() {
     return 1
 }
 
-# collect <scenario>: waits for RDLAB_DONE and pulls the JSON
+# collect <scenario>: waits for files/<scenario>.json and pulls it
 collect() {
     local name="$1"
     for _ in $(seq 1 180); do
-        if adb logcat -d -s RDLAB:I | grep -q RDLAB_DONE; then
-            adb exec-out run-as "$PKG" cat files/lab_result.json > "$OUT_DIR/$name.json"
+        if adb shell run-as "$PKG" test -s "files/$name.json" 2>/dev/null; then
+            sleep 1  # let the write finish
+            adb exec-out run-as "$PKG" cat "files/$name.json" > "$OUT_DIR/$name.json"
             echo "saved $OUT_DIR/$name.json ($(grep -c '"id"' "$OUT_DIR/$name.json") indicators)"
             return 0
         fi
@@ -86,16 +89,16 @@ for sc in "${SCENARIOS[@]}"; do
     log "scenario: $sc"
     case "$sc" in
         baseline|magisk)
-            start_app 0 >/dev/null && collect "$sc" || rc=1
+            start_app "$sc" 0 >/dev/null && collect "$sc" || rc=1
             ;;
         frida_server)
             ensure_frida_server || rc=1
-            start_app 0 >/dev/null && collect "$sc" || rc=1
+            start_app "$sc" 0 >/dev/null && collect "$sc" || rc=1
             stop_frida_server
             ;;
         frida_attach)
             ensure_frida_server || rc=1
-            pid=$(start_app 20000) || { rc=1; endlog; continue; }
+            pid=$(start_app "$sc" 20000) || { rc=1; endlog; continue; }
             python3 "$HERE/frida_attach.py" "$pid" 60 &
             # (frida_attach.py prints "frida: {'type': 'send', 'payload': 'attached'}" once injected)
             fpid=$!
@@ -104,7 +107,7 @@ for sc in "${SCENARIOS[@]}"; do
             stop_frida_server
             ;;
         jdwp_debugger)
-            pid=$(start_app 20000) || { rc=1; endlog; continue; }
+            pid=$(start_app "$sc" 20000) || { rc=1; endlog; continue; }
             adb forward tcp:8700 "jdwp:$pid"
             # jdb stays attached while its stdin is open
             (sleep 60 | jdb -attach localhost:8700 >/dev/null 2>&1) &
