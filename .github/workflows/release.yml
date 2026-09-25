@@ -3,6 +3,9 @@ name: Release APK
 on:
   push:
     tags: [ "v*" ]
+    # A branch push releases only when the commit message contains "[release]"
+    # (used when tags cannot be pushed directly); the tag is then created by the release.
+    branches: [ main, "claude/**" ]
   workflow_dispatch:
     inputs:
       tag:
@@ -14,9 +17,13 @@ permissions:
 
 jobs:
   release:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/') ||
+      contains(github.event.head_commit.message, '[release]')
     runs-on: ubuntu-latest
     env:
-      TAG: ${{ inputs.tag || github.ref_name }}
+      INPUT_TAG: ${{ inputs.tag || (startsWith(github.ref, 'refs/tags/') && github.ref_name) || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -30,9 +37,11 @@ jobs:
       - name: Check tag matches versionName
         run: |
           version=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts)
-          echo "versionName=$version tag=$TAG"
-          [ "v$version" = "$TAG" ] || { echo "::error::tag $TAG does not match versionName $version"; exit 1; }
+          tag="${INPUT_TAG:-v$version}"
+          echo "versionName=$version tag=$tag"
+          [ "v$version" = "$tag" ] || { echo "::error::tag $tag does not match versionName $version"; exit 1; }
           echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
 
       - name: Signing key
         env:
@@ -84,7 +93,7 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.TAG }}
+          tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: Advanced Root Detector v${{ env.VERSION }}
           body_path: notes.md
