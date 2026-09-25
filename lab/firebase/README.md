@@ -24,7 +24,8 @@ devices per run and never runs on push, so it stays inside the free quota.
 4. **GitHub secret** — repo *Settings → Secrets and variables → Actions → New secret*:
    - Name: `FIREBASE_SERVICE_ACCOUNT`
    - Value: the full contents of the JSON file (the project id is read from it).
-5. Run it: *Actions → Device Lab (Firebase Test Lab) → Run workflow*.
+5. Run it: *Actions → Device Lab (Firebase Test Lab) → Run workflow* (once merged to `main`),
+   or push a commit whose message contains `[device-lab]`.
 
 Results (pass/fail per device, logcat with the `RDLAB` tag, videos) are in the Firebase
 console under *Test Lab*, and the pass/fail table is in the workflow summary.

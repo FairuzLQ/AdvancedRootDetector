@@ -4,6 +4,10 @@ name: Device Lab (Firebase Test Lab)
 # indicator — a false-positive gate on hardware we do not own. Manual + weekly only,
 # to stay inside the free (Spark) daily quota. Setup: lab/firebase/README.md
 on:
+  # A push runs it only when the commit message contains "[device-lab]" (manual dispatch
+  # needs the workflow on the default branch).
+  push:
+    branches: [ main, "claude/**" ]
   workflow_dispatch:
     inputs:
       physical_devices:
@@ -14,6 +18,7 @@ on:
 
 jobs:
   firebase-test-lab:
+    if: github.event_name != 'push' || contains(github.event.head_commit.message, '[device-lab]')
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
