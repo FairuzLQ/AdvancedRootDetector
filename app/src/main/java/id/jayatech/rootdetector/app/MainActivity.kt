@@ -323,6 +323,19 @@ class MainActivity : AppCompatActivity() {
                 }
             })
         }
+        // Raw in-process traces, so a missed injection can be turned into a new rule.
+        json.put("diag", org.json.JSONObject().apply {
+            put("threads", org.json.JSONArray(runCatching {
+                java.io.File("/proc/self/task").listFiles().orEmpty()
+                    .mapNotNull { runCatching { java.io.File(it, "comm").readText().trim() }.getOrNull() }
+                    .distinct().sorted()
+            }.getOrDefault(emptyList())))
+            put("maps", org.json.JSONArray(runCatching {
+                java.io.File("/proc/self/maps").readLines()
+                    .filter { "memfd:" in it || "(deleted)" in it || "/data/local/tmp" in it }
+                    .map { it.substringAfterLast("  ").trim() }.distinct().take(40)
+            }.getOrDefault(emptyList())))
+        })
         // filesDir only accepts a plain name — no path traversal from the intent extra.
         java.io.File(filesDir, java.io.File(fileName).name).writeText(json.toString(2))
         android.util.Log.i("RDLAB", "RDLAB_DONE ${result.indicators.size}")

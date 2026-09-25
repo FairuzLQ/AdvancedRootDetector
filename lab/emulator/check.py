@@ -34,6 +34,15 @@ for name in sorted(f[:-5] for f in os.listdir(out_dir) if f.endswith(".json")):
         details.append(f"- **{ind['risk']}** `{ind['id']}` — {ind['title']}")
         for ev in ind["evidence"][:3]:
             details.append(f"  - `{str(ev)[:160]}`")
+    diag = data.get("diag", {})
+    if diag:
+        details.append("<details><summary>diag: threads / memfd maps</summary>")
+        details.append("")
+        details.append("threads: " + ", ".join(f"`{t}`" for t in diag.get("threads", [])))
+        details.append("")
+        for m in diag.get("maps", []):
+            details.append(f"- `{m}`")
+        details.append("</details>")
     details.append("")
 
 print("\n".join(lines + [""] + details))

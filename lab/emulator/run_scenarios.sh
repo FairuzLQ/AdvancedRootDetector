@@ -64,11 +64,22 @@ ensure_frida_server() {
     # Renamed on purpose — name-based file rules should NOT be what catches it.
     adb push "/tmp/fs-$ver-$arch" /data/local/tmp/fs64 >/dev/null
     adb shell chmod 755 /data/local/tmp/fs64
-    adb shell "pgrep -f fs64 >/dev/null || (/data/local/tmp/fs64 -D &)"
-    sleep 3
+    # Note: `pgrep -f fs64` would match the adb shell command line itself — use exact comm.
+    adb shell pkill -x fs64 2>/dev/null || true
+    # -D daemonizes; redirect stdio so adb shell does not wait on the daemon's fds
+    timeout 15 adb shell "/data/local/tmp/fs64 -D </dev/null >/dev/null 2>&1 &" || true
+    for _ in $(seq 1 20); do
+        if frida-ps -U >/dev/null 2>&1; then
+            echo "frida-server $ver running: $(adb shell pidof fs64 | tr -d '\r')"
+            return 0
+        fi
+        sleep 1
+    done
+    echo "frida-server did not come up"
+    return 1
 }
 
-stop_frida_server() { adb shell pkill -f fs64 || true; adb shell rm -f /data/local/tmp/fs64; }
+stop_frida_server() { adb shell pkill -x fs64 || true; adb shell rm -f /data/local/tmp/fs64; }
 
 rc=0
 for sc in "${SCENARIOS[@]}"; do
@@ -78,14 +89,15 @@ for sc in "${SCENARIOS[@]}"; do
             start_app 0 >/dev/null && collect "$sc" || rc=1
             ;;
         frida_server)
-            ensure_frida_server
+            ensure_frida_server || rc=1
             start_app 0 >/dev/null && collect "$sc" || rc=1
             stop_frida_server
             ;;
         frida_attach)
-            ensure_frida_server
+            ensure_frida_server || rc=1
             pid=$(start_app 20000) || { rc=1; endlog; continue; }
             python3 "$HERE/frida_attach.py" "$pid" 60 &
+            # (frida_attach.py prints "frida: {'type': 'send', 'payload': 'attached'}" once injected)
             fpid=$!
             collect "$sc" || rc=1
             kill "$fpid" 2>/dev/null; wait "$fpid" 2>/dev/null

@@ -94,6 +94,7 @@ jobs:
       - name: Check results
         if: always()
         run: |
+          set -o pipefail
           python3 lab/emulator/check.py lab/emulator/out ${{ matrix.api }} | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
@@ -124,10 +125,13 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "$SYSIMG" emulator platform-tools > /dev/null
           echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd -n lab -k "$SYSIMG" --force
       - name: Root with rootAVD and scan
+        timeout-minutes: 30
         run: bash lab/emulator/magisk_lab.sh app-debug.apk lab system-images/android-30/google_apis/x86_64/ramdisk.img
       - name: Check results
         if: always()
-        run: python3 lab/emulator/check.py lab/emulator/out magisk-api30 | tee -a "$GITHUB_STEP_SUMMARY"
+        run: |
+          set -o pipefail
+          python3 lab/emulator/check.py lab/emulator/out magisk-api30 | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
