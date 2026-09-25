@@ -56,11 +56,11 @@
   "magisk_zygisk": {
     "must": [],
     "mustnot": [],
-    "note": "Magisk with Zygisk enabled, app NOT on the DenyList. Report-only."
+    "note": "Magisk with Zygisk enabled, app NOT on the DenyList. Report-only. NOTE: on the google_apis x86_64 (arm64-translation) image Zygisk does not load (native-bridge conflict), so this currently equals plain Magisk \u2014 hiding is NOT exercised yet."
   },
   "magisk_zygisk_denylist": {
     "must": [],
     "mustnot": [],
-    "note": "Magisk + Zygisk + DenyList enforced for this app \u2014 what survives Magisk's own hiding. Report-only."
+    "note": "Magisk + Zygisk + DenyList enforced for this app \u2014 what survives Magisk's own hiding. Report-only. NOTE: on the google_apis x86_64 (arm64-translation) image Zygisk does not load (native-bridge conflict), so this currently equals plain Magisk \u2014 hiding is NOT exercised yet."
   }
 }

@@ -92,8 +92,10 @@ internal class BinaryDetector(context: Context, props: PropSnapshot = PropSnapsh
         // 4b. Other root-exclusive binaries via `which` — same subprocess isolation
         detectRootBinsViaWhich()?.let { findings += it }
 
-        // 5. Actually execute su and observe result — most reliable test
-        detectSuExecution()?.let { findings += it }
+        // 5. Actually execute su and observe result — opt-in (triggers the root prompt)
+        if (id.jayatech.rootdetector.RootDetector.suExecutionEnabled) {
+            detectSuExecution()?.let { findings += it }
+        }
 
         return findings
     }

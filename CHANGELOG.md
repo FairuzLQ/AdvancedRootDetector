@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+- `native_inline_hook`: libc prologues in memory vs libc.so on disk — catches Frida Interceptor
+  hooks regardless of name (verified on emulator API 30/34/35)
+- `DetectionResult.timingsMs`: per-detector scan time
+- `su -c id` execution is now opt-in (`RootDetector.suExecutionEnabled`): on rooted devices it
+  popped up the root prompt and added ~2 s to every scan (measured in the lab)
+- Lab: Magisk on emulator (rootAVD), Frida hook scenario, API 28–35 matrix, libFuzzer, weekly run
+
 ## [1.6.0] — Frida & Debugger Detection + False Positive Fixes
 
 ## What's New

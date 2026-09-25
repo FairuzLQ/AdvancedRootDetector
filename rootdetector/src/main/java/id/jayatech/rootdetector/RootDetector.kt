@@ -31,6 +31,14 @@ object RootDetector {
     @JvmStatic
     var loggingEnabled: Boolean = false
 
+    /**
+     * Actually execute `su -c id`. Off by default: on a rooted device this pops up the root
+     * manager's superuser prompt in front of the host app's user and blocks the scan for
+     * ~2 s (measured in the lab). The su binary itself is still detected without executing it.
+     */
+    @JvmStatic
+    var suExecutionEnabled: Boolean = false
+
     fun scan(context: Context): DetectionResult {
         // One getprop snapshot shared by every detector in this scan.
         val props = PropSnapshot()
