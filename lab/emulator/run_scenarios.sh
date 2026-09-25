@@ -39,7 +39,7 @@ start_app() {
 # collect <scenario>: waits for files/<scenario>.json and pulls it
 collect() {
     local name="$1"
-    for _ in $(seq 1 180); do
+    for _ in $(seq 1 120); do
         if adb shell run-as "$PKG" test -s "files/$name.json" 2>/dev/null; then
             sleep 1  # let the write finish
             adb exec-out run-as "$PKG" cat "files/$name.json" > "$OUT_DIR/$name.json"
@@ -49,7 +49,10 @@ collect() {
         sleep 1
     done
     echo "timeout waiting for scan in scenario $name"
-    adb logcat -d | tail -50
+    echo "app pid: '$(adb shell pidof "$PKG" | tr -d '\r')'"
+    echo "files/: $(adb shell run-as "$PKG" ls -la files 2>&1 | tr -d '\r')"
+    adb logcat -d -b crash | tail -40
+    adb logcat -d | grep -iE "RDLAB|RootDetector|AndroidRuntime|FATAL|DEBUG" | tail -60
     echo '{"error":"timeout"}' > "$OUT_DIR/$name.json"
     return 1
 }

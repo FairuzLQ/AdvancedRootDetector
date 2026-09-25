@@ -5,6 +5,8 @@ coreKtx = "1.13.1"
 appcompat = "1.7.0"
 material = "1.12.0"
 coroutines = "1.7.1"
+androidxTestRunner = "1.6.2"
+androidxTestJunit = "1.2.1"
 minSdk = "26"
 targetSdk = "34"
 compileSdk = "34"
@@ -13,6 +15,8 @@ compileSdk = "34"
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 material = { group = "com.google.android.material", name = "material", version.ref = "material" }
+androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "androidxTestRunner" }
+androidx-test-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxTestJunit" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 
 [plugins]

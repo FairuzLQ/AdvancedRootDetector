@@ -76,6 +76,14 @@ for _ in $(seq 1 150); do
     sleep 2
 done
 magisk_cli --sqlite "\"SELECT key,value FROM settings\"" || true
+# Magisk loads Zygisk through the native bridge: the prop names libzygisk when it is active.
+bridge=$(adb shell getprop ro.dalvik.vm.native.bridge | tr -d '\r')
+echo "ro.dalvik.vm.native.bridge='$bridge'"
+if echo "$bridge" | grep -qi zygisk; then
+    echo "::notice::Zygisk is ACTIVE on this image"
+else
+    echo "::warning::Zygisk did NOT load on this image — Zygisk/DenyList scenarios equal plain Magisk"
+fi
 bash "$HERE/run_scenarios.sh" "$APK" magisk_zygisk || rc=1
 
 echo "== enforce DenyList for $PKG"

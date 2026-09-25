@@ -58,6 +58,11 @@ releases that break a detection.
 Results are JSON (`emulator/out/*.json`), checked by `check.py` against
 `expectations.json`, and rendered into the Actions job summary.
 
+## Device lab (real phones)
+
+`firebase/` — the same scan on real, stock phones in Firebase Test Lab as a false-positive
+gate. Free-tier friendly (manual + weekly). Setup: [`firebase/README.md`](firebase/README.md).
+
 ### Not reproducible in CI
 
 KernelSU / KernelSU Next / SukiSU / APatch need a patched kernel, and LSPosed / Shamiko /

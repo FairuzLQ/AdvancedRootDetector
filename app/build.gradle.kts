@@ -19,6 +19,7 @@ android {
         targetSdk = libs.versions.targetSdk.get().toInt()
         versionCode = 23
         versionName = "1.6.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
@@ -57,4 +58,8 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
+
+    // Device lab (Firebase Test Lab): scan on real, clean devices — see lab/firebase/
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.junit)
 }

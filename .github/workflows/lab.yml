@@ -132,8 +132,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 50
     continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        # google_apis x86_64 ships arm64 translation on the native bridge, which keeps
+        # Zygisk from loading; the AOSP "default" image is tried to exercise Zygisk + DenyList.
+        target: [ google_apis, default ]
     env:
-      SYSIMG: "system-images;android-30;google_apis;x86_64"
+      SYSIMG: "system-images;android-30;${{ matrix.target }};x86_64"
       # avdmanager and emulator must agree on where AVDs live (they did not by default).
       ANDROID_AVD_HOME: /home/runner/.android/avd
     steps:
@@ -154,16 +160,16 @@ jobs:
           "$ANDROID_HOME/emulator/emulator" -list-avds
       - name: Root with rootAVD and scan (default, Zygisk, Zygisk + DenyList)
         timeout-minutes: 35
-        run: bash lab/emulator/magisk_lab.sh app-debug.apk lab system-images/android-30/google_apis/x86_64/ramdisk.img
+        run: bash lab/emulator/magisk_lab.sh app-debug.apk lab system-images/android-30/${{ matrix.target }}/x86_64/ramdisk.img
       - name: Check results
         if: always()
         run: |
           set -o pipefail
-          python3 lab/emulator/check.py lab/emulator/out magisk-api30 | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 lab/emulator/check.py lab/emulator/out magisk-api30-${{ matrix.target }} | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: magisk-lab
+          name: magisk-lab-${{ matrix.target }}
           path: |
             lab/emulator/out
             /tmp/emulator.log

@@ -1,0 +1,76 @@
+name: Device Lab (Firebase Test Lab)
+
+# Runs the library on REAL, stock phones (Firebase Test Lab) and fails on any root
+# indicator — a false-positive gate on hardware we do not own. Manual + weekly only,
+# to stay inside the free (Spark) daily quota. Setup: lab/firebase/README.md
+on:
+  workflow_dispatch:
+    inputs:
+      physical_devices:
+        description: "Number of physical devices (quota!)"
+        default: "3"
+  schedule:
+    - cron: "43 3 * * 1"
+
+jobs:
+  firebase-test-lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Check credentials
+        id: creds
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$SA" ]; then
+            echo "::warning::FIREBASE_SERVICE_ACCOUNT secret not set — skipping (see lab/firebase/README.md)"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+            echo "PROJECT_ID=$(echo "$SA" | python3 -c 'import json,sys; print(json.load(sys.stdin)["project_id"])')" >> "$GITHUB_ENV"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.creds.outputs.ok == 'true'
+      - uses: actions/setup-java@v4
+        if: steps.creds.outputs.ok == 'true'
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.creds.outputs.ok == 'true'
+      - name: Build app + instrumentation test APKs
+        if: steps.creds.outputs.ok == 'true'
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.1.12297006" "cmake;3.22.1" > /dev/null
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
+
+      - uses: google-github-actions/auth@v2
+        if: steps.creds.outputs.ok == 'true'
+        with:
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+        if: steps.creds.outputs.ok == 'true'
+
+      - name: Run on real devices
+        if: steps.creds.outputs.ok == 'true'
+        env:
+          FTL_PHYSICAL: ${{ inputs.physical_devices || '3' }}
+        run: |
+          gcloud config set project "$PROJECT_ID"
+          devices=$(gcloud firebase test android models list --format=json | python3 lab/firebase/pick_devices.py)
+          echo "Devices: $devices"
+          set -o pipefail
+          gcloud firebase test android run \
+            --type instrumentation \
+            --app app/build/outputs/apk/debug/app-debug.apk \
+            --test app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk \
+            $devices \
+            --timeout 10m \
+            --results-history-name "rootdetector-device-lab" \
+            --format="table(outcome,axis_value,test_details)" 2>&1 | tee ftl.txt
+      - name: Summary
+        if: always() && steps.creds.outputs.ok == 'true'
+        run: |
+          { echo "## Device lab (Firebase Test Lab)"; echo '```'; cat ftl.txt 2>/dev/null | tail -40; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

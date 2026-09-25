@@ -7,6 +7,7 @@
 - `su -c id` execution is now opt-in (`RootDetector.suExecutionEnabled`): on rooted devices it
   popped up the root prompt and added ~2 s to every scan (measured in the lab)
 - Lab: Magisk on emulator (rootAVD), Frida hook scenario, API 28–35 matrix, libFuzzer, weekly run
+- Device lab: `CleanDeviceScanTest` on real stock phones via Firebase Test Lab (false-positive gate)
 
 ## [1.6.0] — Frida & Debugger Detection + False Positive Fixes
 
