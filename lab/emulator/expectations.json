@@ -8,7 +8,8 @@
       "debug_frida_threads",
       "debug_frida_maps",
       "debug_jdwp",
-      "native_frida_port"
+      "native_frida_port",
+      "native_inline_hook"
     ]
   },
   "frida_server": {
@@ -35,12 +36,31 @@
     ],
     "mustnot": [
       "debug_frida_threads",
-      "debug_frida_maps"
+      "debug_frida_maps",
+      "native_inline_hook"
     ]
   },
   "magisk": {
     "must": [],
     "mustnot": [],
-    "note": "Experimental: emulator rooted with rootAVD (Magisk). Report-only until the job is stable."
+    "note": "Magisk (rootAVD) default config: Zygisk off, DenyList off. Report-only."
+  },
+  "frida_hook": {
+    "must": [
+      "debug_frida_threads",
+      "native_inline_hook"
+    ],
+    "mustnot": [],
+    "note": "Frida agent attached AND an Interceptor hook placed on libc open() \u2014 the inline-hook check must see the patched prologue."
+  },
+  "magisk_zygisk": {
+    "must": [],
+    "mustnot": [],
+    "note": "Magisk with Zygisk enabled, app NOT on the DenyList. Report-only."
+  },
+  "magisk_zygisk_denylist": {
+    "must": [],
+    "mustnot": [],
+    "note": "Magisk + Zygisk + DenyList enforced for this app \u2014 what survives Magisk's own hiding. Report-only."
   }
 }

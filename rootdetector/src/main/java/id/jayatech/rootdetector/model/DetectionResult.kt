@@ -4,7 +4,9 @@ data class DetectionResult(
     val isRooted: Boolean,
     val riskScore: Int,
     val indicators: List<RootIndicator>,
-    val summary: Map<DetectorCategory, List<RootIndicator>>
+    val summary: Map<DetectorCategory, List<RootIndicator>>,
+    /** Wall-clock time per detector (simple class name → ms) for the scan that produced this. */
+    val timingsMs: Map<String, Long> = emptyMap()
 ) {
     val riskLevel: RiskLevel
         get() = when {

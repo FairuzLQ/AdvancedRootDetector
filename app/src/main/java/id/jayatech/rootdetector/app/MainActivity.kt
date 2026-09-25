@@ -311,6 +311,7 @@ class MainActivity : AppCompatActivity() {
             put("isRooted", result.isRooted)
             put("riskScore", result.riskScore)
             put("sdk", android.os.Build.VERSION.SDK_INT)
+            put("timingsMs", org.json.JSONObject(result.timingsMs))
             put("indicators", org.json.JSONArray().apply {
                 result.indicators.forEach { ind ->
                     put(org.json.JSONObject().apply {

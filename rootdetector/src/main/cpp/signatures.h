@@ -295,6 +295,38 @@ inline bool tcp_local_port_is(const std::string& line, const char* port_hex_uppe
 }
 
 // -----------------------------------------------------------------------------
+// Inline hook check helpers (ELF load segments -> file offsets)
+// -----------------------------------------------------------------------------
+
+struct LoadSegment {
+    unsigned long long vaddr;   // p_vaddr
+    unsigned long long memsz;   // p_memsz
+    unsigned long long filesz;  // p_filesz
+    unsigned long long offset;  // p_offset
+};
+
+// Maps a library-relative virtual address to its file offset using the PT_LOAD segments.
+// Returns false when the address is not backed by file bytes (e.g. .bss).
+inline bool vaddr_to_file_offset(const std::vector<LoadSegment>& segs,
+                                 unsigned long long vaddr, size_t len,
+                                 unsigned long long& out_offset) {
+    for (const auto& s : segs) {
+        if (vaddr >= s.vaddr && vaddr + len <= s.vaddr + s.filesz) {
+            out_offset = s.offset + (vaddr - s.vaddr);
+            return true;
+        }
+    }
+    return false;
+}
+
+inline std::string hex_bytes(const unsigned char* p, size_t n) {
+    static const char* d = "0123456789abcdef";
+    std::string r;
+    for (size_t i = 0; i < n; i++) { r += d[p[i] >> 4]; r += d[p[i] & 15]; }
+    return r;
+}
+
+// -----------------------------------------------------------------------------
 // JNI string safety
 // -----------------------------------------------------------------------------
 

@@ -42,8 +42,18 @@ captures: `emulator/capture_fixture.sh` pulls a scenario directory from a device
 | `baseline` | Stock `google_apis` emulator (userdebug, emulator props) |
 | `frida_server` | Official frida-server, renamed to `fs64`, running as root |
 | `frida_attach` | frida-server + Python client attached to the app process (agent injected) |
+| `frida_hook` | Frida attached **and** an Interceptor hook on libc `open()` — verifies the inline-hook check |
 | `jdwp_debugger` | `jdb` attached over JDWP |
-| `magisk` | *(experimental CI job)* AVD rooted with [rootAVD](https://gitlab.com/newbit/rootAVD) + Magisk |
+| `magisk` | AVD rooted with [rootAVD](https://gitlab.com/newbit/rootAVD) + Magisk, default config |
+| `magisk_zygisk` | Same, Zygisk enabled (app not on the DenyList) |
+| `magisk_zygisk_denylist` | Same, Zygisk + DenyList enforced for the app — what survives Magisk's own hiding |
+
+Emulator scenarios run on API 28, 30, 34 and 35 (Magisk on API 30). Each result JSON carries
+per-detector scan times (`timingsMs`), shown in the job summary.
+
+`fuzz-native` runs libFuzzer (ASan + UBSan) over `signatures.h` for 90 s per CI run, seeded
+with the fixtures. The whole lab also runs weekly (schedule) to catch new Frida / Magisk
+releases that break a detection.
 
 Results are JSON (`emulator/out/*.json`), checked by `check.py` against
 `expectations.json`, and rendered into the Actions job summary.

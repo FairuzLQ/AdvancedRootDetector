@@ -32,6 +32,11 @@ for name in sorted(f[:-5] for f in os.listdir(out_dir) if f.endswith(".json")):
     lines.append(f"| {name} | {result} | {data['isRooted']} | {data['riskScore']} | "
                  + ", ".join(f"`{i}`" for i in ids) + " |")
     details.append(f"### {name}")
+    t = data.get("timingsMs") or {}
+    if t:
+        slow = sorted(t.items(), key=lambda kv: -kv[1])[:4]
+        details.append(f"Scan time: **{sum(t.values())} ms** (slowest: "
+                       + ", ".join(f"{k} {v} ms" for k, v in slow) + ")")
     if exp.get("note"):
         details.append(f"> {exp['note']}")
     for ind in data["indicators"]:

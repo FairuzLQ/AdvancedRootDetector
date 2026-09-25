@@ -3,13 +3,13 @@
 # scenarios and stores each result as JSON in $OUT_DIR/<scenario>.json.
 #
 # Usage: run_scenarios.sh <app-debug.apk> [scenario ...]
-# Scenarios: baseline frida_server frida_attach jdwp_debugger magisk
+# Scenarios: baseline frida_server frida_attach frida_hook jdwp_debugger magisk*
 # Requires: adb on PATH, a booted emulator, python3 + frida-tools for the Frida scenarios.
 set -uo pipefail
 
 APK="$1"; shift
 SCENARIOS=("$@")
-[ ${#SCENARIOS[@]} -eq 0 ] && SCENARIOS=(baseline frida_server frida_attach jdwp_debugger)
+[ ${#SCENARIOS[@]} -eq 0 ] && SCENARIOS=(baseline frida_server frida_attach frida_hook jdwp_debugger)
 PKG=id.jayatech.rootdetector.app
 OUT_DIR="${OUT_DIR:-lab/emulator/out}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -88,7 +88,7 @@ rc=0
 for sc in "${SCENARIOS[@]}"; do
     log "scenario: $sc"
     case "$sc" in
-        baseline|magisk)
+        baseline|magisk*)
             start_app "$sc" 0 >/dev/null && collect "$sc" || rc=1
             ;;
         frida_server)
@@ -96,10 +96,10 @@ for sc in "${SCENARIOS[@]}"; do
             start_app "$sc" 0 >/dev/null && collect "$sc" || rc=1
             stop_frida_server
             ;;
-        frida_attach)
+        frida_attach|frida_hook)
             ensure_frida_server || rc=1
             pid=$(start_app "$sc" 20000) || { rc=1; endlog; continue; }
-            python3 "$HERE/frida_attach.py" "$pid" 60 &
+            python3 "$HERE/frida_attach.py" "$pid" 60 $([ "$sc" = frida_hook ] && echo hook) &
             # (frida_attach.py prints "frida: {'type': 'send', 'payload': 'attached'}" once injected)
             fpid=$!
             collect "$sc" || rc=1

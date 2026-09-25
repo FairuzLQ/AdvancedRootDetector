@@ -26,6 +26,7 @@ import id.jayatech.rootdetector.model.RootIndicator
  *   UID_HOOK:    — getuid() libc and SYS_getuid disagree (libc is hooked)
  *   FILE_HIDE:   — root path hidden by libc hook but visible via direct syscall
  *   FUNC_HOOK:   — libc function owned by non-system library (interposition)
+ *   INLINE_HOOK: — libc function prologue in memory differs from libc.so on disk
  *   FD:          — open file descriptor pointing to root daemon
  *   UNIX_SOCKET: — root daemon socket in /proc/net/unix
  *   SBIN_PATH:   — /sbin root binary found via direct syscall (Kitsune/Magisk /sbin leak)
@@ -199,6 +200,19 @@ internal class NativeDetector(context: Context, props: PropSnapshot = PropSnapsh
                 detail = "Critical libc function is owned by a non-system library — LD_PRELOAD or RTLD_INTERPOSE",
                 risk = RiskLevel.CRITICAL,
                 evidence = it
+            )
+        }
+
+        // Inline hooks — libc function prologues differ from libc.so on disk
+        byPrefix["INLINE_HOOK"]?.takeIf { it.isNotEmpty() }?.let {
+            findings += RootIndicator(
+                id = "native_inline_hook",
+                category = DetectorCategory.NATIVE,
+                title = "[Native] Inline Hook in libc",
+                detail = "Critical libc function code in memory differs from libc.so on disk — " +
+                         "patched by Frida Interceptor or another native hooking framework",
+                risk = RiskLevel.CRITICAL,
+                evidence = it.take(6)
             )
         }
 

@@ -41,4 +41,28 @@ boot
 echo "== after root: id via su (may be denied for shell) =="
 adb shell 'su -c id' || true
 adb shell 'ls -la /debug_ramdisk /sbin 2>/dev/null | head' || true
-bash "$HERE/run_scenarios.sh" "$APK" magisk
+rc=0
+bash "$HERE/run_scenarios.sh" "$APK" magisk || rc=1
+
+# Magisk's own hiding: enable Zygisk (+ reboot), then enforce the DenyList for our app.
+# `adb root` gives a uid-0 shell on google_apis images, so the magisk CLI can be used directly.
+PKG=id.jayatech.rootdetector.app
+magisk_cli() { adb root >/dev/null 2>&1; adb wait-for-device; adb shell "magisk $*"; }
+
+echo "== enable Zygisk and reboot"
+magisk_cli --sqlite "\"REPLACE INTO settings (key,value) VALUES('zygisk',1)\""
+adb reboot; sleep 5
+timeout 300 adb wait-for-device
+for _ in $(seq 1 150); do
+    [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ] && break
+    sleep 2
+done
+magisk_cli --sqlite "\"SELECT key,value FROM settings\"" || true
+bash "$HERE/run_scenarios.sh" "$APK" magisk_zygisk || rc=1
+
+echo "== enforce DenyList for $PKG"
+magisk_cli --denylist enable
+magisk_cli --denylist add "$PKG"
+magisk_cli --denylist ls || true
+bash "$HERE/run_scenarios.sh" "$APK" magisk_zygisk_denylist || rc=1
+exit $rc

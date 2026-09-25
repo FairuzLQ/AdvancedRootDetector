@@ -35,7 +35,7 @@ Detector/
 | `FileSystemDetector` | Root APKs in /system, writable /system, /data/adb contents |
 | `PropsDetector` | test-keys, ro.debuggable, ro.secure, SELinux permissive, bootloader state |
 | `MountDetector` | OverlayFS on /system, rw /system, Magisk tmpfs, mount namespace diff |
-| `NativeDetector` | /proc/self/maps (native), KSU syscall 0xDEADBEEF probe, dlopen probe |
+| `NativeDetector` | /proc/self/maps (native), KSU syscall 0xDEADBEEF probe, dlopen probe, libc inline-hook check (memory vs disk) |
 | `IntegrityDetector` | Hardware Key Attestation (TEE/StrongBox) boot state + bypass heuristics |
 | `EmulatorDetector` | Build props, emulator device nodes, cpuinfo, missing sensors |
 | `DebugDetector` | JDWP debugger, ptrace TracerPid, Frida agent threads + maps (incl. repackaged gadget) |
@@ -72,8 +72,10 @@ Detector/
 ```bash
 gradle -p lab/host test          # rules vs fixtures (no Android SDK) → lab/REPORT.md
 ```
-CI (`.github/workflows/lab.yml`) also runs real scenarios on x86_64 emulators (API 30/34):
-baseline, renamed frida-server, Frida attach, JDWP debugger, and experimental Magisk (rootAVD).
+CI (`.github/workflows/lab.yml`) also runs real scenarios on x86_64 emulators (API 28/30/34/35):
+baseline, renamed frida-server, Frida attach, Frida hook (inline-hook check), JDWP debugger, and
+Magisk via rootAVD (default / Zygisk / Zygisk + DenyList). Plus libFuzzer over `signatures.h`
+and a weekly scheduled run.
 
 ## Adding New Detectors
 1. Create `XxxDetector(context, props: PropSnapshot = PropSnapshot()) : BaseDetector(context, props)` in `detector/`

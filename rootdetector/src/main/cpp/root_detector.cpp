@@ -392,6 +392,79 @@ static std::vector<std::string> check_function_interposition() {
 }
 
 // =============================================================================
+// 10b. Inline hook detection — in-memory libc code vs the bytes on disk
+//
+//      Frida's Interceptor and most native hooking frameworks overwrite the first
+//      instructions of the target function with a jump. Name-independent: a renamed
+//      Frida build or a custom hooker patches the same bytes. We compare the first
+//      16 bytes of critical libc functions in memory against libc.so on disk, read
+//      through raw syscalls so a hooked open/read cannot lie to us.
+// =============================================================================
+
+struct PhdrQuery {
+    uintptr_t base;
+    std::vector<sig::LoadSegment> segs;
+    bool found;
+};
+
+static int collect_load_segments(struct dl_phdr_info* info, size_t, void* data) {
+    auto* q = reinterpret_cast<PhdrQuery*>(data);
+    if ((uintptr_t)info->dlpi_addr != q->base) return 0;
+    for (int i = 0; i < info->dlpi_phnum; i++) {
+        const auto& ph = info->dlpi_phdr[i];
+        if (ph.p_type != PT_LOAD) continue;
+        q->segs.push_back({ (unsigned long long)ph.p_vaddr, (unsigned long long)ph.p_memsz,
+                            (unsigned long long)ph.p_filesz, (unsigned long long)ph.p_offset });
+    }
+    q->found = true;
+    return 1;
+}
+
+static bool read_file_bytes(const char* path, unsigned long long off, unsigned char* buf, size_t n) {
+    int fd = (int)syscall(__NR_openat, AT_FDCWD, path, O_RDONLY | O_CLOEXEC, 0);
+    if (fd < 0) return false;
+    ssize_t r = (ssize_t)syscall(__NR_pread64, fd, buf, n, (off_t)off);
+    close(fd);
+    return r == (ssize_t)n;
+}
+
+static std::vector<std::string> check_inline_hooks() {
+    std::vector<std::string> hits;
+    const char* funcs[] = {
+        "open", "openat", "read", "access", "stat", "fstatat", "fopen",
+        "readlink", "getuid", "kill", "ptrace", "dlopen", "__system_property_get",
+        nullptr
+    };
+    const size_t N = 16;
+    for (int i = 0; funcs[i]; i++) {
+        void* sym = dlsym(RTLD_DEFAULT, funcs[i]);
+        if (!sym) continue;
+        Dl_info info{};
+        if (!dladdr(sym, &info) || !info.dli_fname || !info.dli_fbase) continue;
+        // Only system libraries: interposers are reported by FUNC_HOOK already.
+        if (info.dli_fname[0] != '/' || sig::is_foreign_symbol_owner(info.dli_fname)) continue;
+
+        PhdrQuery q{ (uintptr_t)info.dli_fbase, {}, false };
+        dl_iterate_phdr(collect_load_segments, &q);
+        if (!q.found) continue;
+
+        unsigned long long rel = (unsigned long long)((uintptr_t)sym - (uintptr_t)info.dli_fbase);
+        unsigned long long off = 0;
+        if (!sig::vaddr_to_file_offset(q.segs, rel, N, off)) continue;
+
+        unsigned char disk[N], mem[N];
+        if (!read_file_bytes(info.dli_fname, off, disk, N)) continue;
+        memcpy(mem, sym, N);
+        if (memcmp(disk, mem, N) != 0) {
+            hits.push_back(std::string(funcs[i]) + "() in " + info.dli_fname +
+                           " patched: mem=" + sig::hex_bytes(mem, N) +
+                           " disk=" + sig::hex_bytes(disk, N));
+        }
+    }
+    return hits;
+}
+
+// =============================================================================
 // 11. File descriptor scan
 //
 //     Enumerate /proc/self/fd and resolve each link. Flag FDs pointing to
@@ -1003,6 +1076,10 @@ Java_id_jayatech_rootdetector_detector_NativeDetector_nativeScan(JNIEnv* env, jo
     // --- Function interposition (LD_PRELOAD/RTLD_INTERPOSE) ---
     for (auto& s : check_function_interposition())
         results.push_back("FUNC_HOOK:" + s);
+
+    // --- Inline hooks (patched libc prologues) ---
+    for (auto& s : check_inline_hooks())
+        results.push_back("INLINE_HOOK:" + s);
 
     // --- FD scan ---
     for (auto& s : scan_file_descriptors())

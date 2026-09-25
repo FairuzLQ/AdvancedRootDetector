@@ -52,12 +52,15 @@ object RootDetector {
         )
 
         val allIndicators = mutableListOf<RootIndicator>()
+        val timings = linkedMapOf<String, Long>()
         for (detector in detectors) {
+            val start = System.nanoTime()
             try {
                 allIndicators += detector.detect()
             } catch (_: Throwable) {
                 // never crash the host app — Errors too (LinkageError, StackOverflowError, ...)
             }
+            timings[detector.javaClass.simpleName] = (System.nanoTime() - start) / 1_000_000
         }
 
         val score = allIndicators
@@ -79,7 +82,8 @@ object RootDetector {
             isRooted = allIndicators.any { it.risk > RiskLevel.INFO },
             riskScore = score,
             indicators = allIndicators,
-            summary = summary
+            summary = summary,
+            timingsMs = timings
         )
     }
 

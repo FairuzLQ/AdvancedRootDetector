@@ -5,6 +5,11 @@ on:
     branches: [ main, "claude/**" ]
   pull_request:
   workflow_dispatch:
+  # Weekly run with the newest Frida / Magisk: early warning when a new tool release
+  # breaks a detection. (GitHub runs schedules from the default branch only.)
+  schedule:
+    - cron: "17 2 * * 1"
+
 
 concurrency:
   group: lab-${{ github.ref }}
@@ -34,6 +39,22 @@ jobs:
           name: host-lab-report
           path: lab/REPORT.md
 
+  # libFuzzer over the native rules (they parse untrusted /proc text inside the host app).
+  fuzz-native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang + libFuzzer runtime
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq clang libclang-rt-dev > /dev/null
+      - name: Fuzz signatures.h (90 s)
+        run: |
+          clang++ -std=c++17 -g -O1 -fsanitize=fuzzer,address,undefined \
+            lab/native/fuzz_signatures.cpp -o fuzz_signatures
+          mkdir -p corpus && cat lab/fixtures/*/* > corpus/seed_all 2>/dev/null || true
+          for f in lab/fixtures/*/*; do cp "$f" "corpus/$(echo "$f" | tr '/' '_')"; done
+          ./fuzz_signatures corpus -max_total_time=90 -max_len=4096 -timeout=5 -print_final_stats=1
+
   build-apk:
     runs-on: ubuntu-latest
     steps:
@@ -62,7 +83,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        api: [ 30, 34 ]
+        api: [ 28, 30, 34, 35 ]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -90,7 +111,7 @@ jobs:
           arch: x86_64
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
-          script: bash lab/emulator/run_scenarios.sh app-debug.apk baseline frida_server frida_attach jdwp_debugger
+          script: bash lab/emulator/run_scenarios.sh app-debug.apk baseline frida_server frida_attach frida_hook jdwp_debugger
       - name: Check results
         if: always()
         run: |
@@ -106,7 +127,7 @@ jobs:
   magisk-lab:
     needs: build-apk
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 50
     continue-on-error: true
     env:
       SYSIMG: "system-images;android-30;google_apis;x86_64"
@@ -128,8 +149,8 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "$SYSIMG" emulator platform-tools > /dev/null || true
           echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd -n lab -k "$SYSIMG" --force
           "$ANDROID_HOME/emulator/emulator" -list-avds
-      - name: Root with rootAVD and scan
-        timeout-minutes: 30
+      - name: Root with rootAVD and scan (default, Zygisk, Zygisk + DenyList)
+        timeout-minutes: 35
         run: bash lab/emulator/magisk_lab.sh app-debug.apk lab system-images/android-30/google_apis/x86_64/ramdisk.img
       - name: Check results
         if: always()
