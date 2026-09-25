@@ -1,0 +1,9 @@
+must mount_zygisk_lib
+must mount_magisk_tmpfs
+must mount_module_bind
+must magisk_proc_ps
+must magisk_exe_proc
+must native:uid0
+mustnot native:kernel_str
+gap Magisk 24+ daemon socket name is random (@b0ba55e1...) — name-based socket rules cannot see it
+must props_root_runtime

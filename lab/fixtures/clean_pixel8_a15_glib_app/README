@@ -1,0 +1,3 @@
+Stock Pixel 8, Android 15, locked. Host app bundles GStreamer (GLib) so it legitimately
+owns "gmain"/"gdbus" threads — must NOT be reported as Frida. Virtual A/B overlay-free
+system, APEX loop mounts, and a user-space "sultan" string only in an unrelated prop.

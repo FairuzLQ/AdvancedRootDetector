@@ -1,0 +1,29 @@
+Name:	init
+Pid:	1
+PPid:	0
+Uid:	0	0	0	0
+----
+Name:	kthreadd
+Pid:	2
+PPid:	0
+Uid:	0	0	0	0
+----
+Name:	irq/23-fts_ts
+Pid:	311
+PPid:	2
+Uid:	0	0	0	0
+----
+Name:	khugepaged
+Pid:	88
+PPid:	2
+Uid:	0	0	0	0
+----
+Name:	vold
+Pid:	401
+PPid:	1
+Uid:	0	0	0	0
+----
+Name:	com.bank.app
+Pid:	4411
+PPid:	780
+Uid:	10220	10220	10220	10220

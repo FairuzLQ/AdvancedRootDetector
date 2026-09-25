@@ -1,0 +1,6 @@
+must ksu_kernel_version
+must mount_overlay_system
+must mount_ksu_ap
+must mount_data_adb
+must mount_module_bind
+must native:kernel_str

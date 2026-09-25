@@ -1,0 +1,7 @@
+rootfs / rootfs ro,seclabel,size=1383008k,nr_inodes=345752 0 0
+magisk /sbin tmpfs rw,seclabel,relatime,mode=755 0 0
+/dev/block/bootdevice/by-name/system /sbin/.magisk/mirror/system ext4 ro,seclabel,relatime,data=ordered 0 0
+/dev/block/bootdevice/by-name/system /system ext4 ro,seclabel,relatime,data=ordered 0 0
+magisk /system/lib64/libzygisk.so tmpfs ro,seclabel,relatime,size=1383008k,nr_inodes=345752,mode=755 0 0
+magisk /system/lib/libzygisk.so tmpfs ro,seclabel,relatime,size=1383008k,nr_inodes=345752,mode=755 0 0
+/dev/block/bootdevice/by-name/userdata /data ext4 rw,seclabel,nosuid,nodev,noatime,noauto_da_alloc,data=ordered 0 0

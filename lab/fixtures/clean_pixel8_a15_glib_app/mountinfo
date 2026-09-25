@@ -1,0 +1,5 @@
+22 1 253:6 / / ro,relatime shared:1 - erofs /dev/block/dm-6 ro,seclabel
+23 22 253:7 / /vendor ro,relatime shared:2 - erofs /dev/block/dm-7 ro,seclabel
+41 22 7:12 / /apex/com.android.runtime@1 ro,nodev,relatime shared:20 - erofs /dev/block/loop12 ro,seclabel
+90 22 253:50 / /data rw,nosuid,nodev,noatime shared:40 - f2fs /dev/block/dm-50 rw,lazytime,seclabel
+91 90 253:50 /media /mnt/pass_through/0/emulated rw,nosuid,nodev,noatime shared:41 - f2fs /dev/block/dm-50 rw,lazytime,seclabel

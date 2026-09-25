@@ -1,0 +1,2 @@
+must debug_frida_threads
+mustnot debug_frida_maps

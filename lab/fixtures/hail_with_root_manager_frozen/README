@@ -1,0 +1,3 @@
+Rooted with Magisk; the user hides/freezes the Magisk app with Hail so it disappears from
+PackageManager queries and plain `pm list packages`. The detector runs
+`pm list packages -u`, which still lists hidden/frozen packages — this fixture is that output.

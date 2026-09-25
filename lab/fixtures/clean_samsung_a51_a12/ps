@@ -1,0 +1,4 @@
+USER            PID   PPID     VSZ    RSS WCHAN            ADDR S NAME
+root              1      0 12623080  6972 do_epoll_wait       0 S init
+system          612      1 12731120 12544 do_epoll_wait       0 S vendor.samsung.hardware.snap_apd@1.0-service
+u0_a220        4411    780 15502332 190212 do_epoll_wait      0 S com.bank.app

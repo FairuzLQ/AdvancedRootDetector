@@ -1,0 +1,2 @@
+USER           PID  PPID     VSZ    RSS WCHAN            ADDR S NAME
+shell         7001     1   40220   6120 do_epoll_wait      0 S shizuku_server

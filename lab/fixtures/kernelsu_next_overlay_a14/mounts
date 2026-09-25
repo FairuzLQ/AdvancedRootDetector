@@ -1,0 +1,4 @@
+/dev/block/dm-6 / ext4 ro,seclabel,relatime 0 0
+KSU /system/bin overlay ro,seclabel,relatime,lowerdir=/data/adb/modules/busybox/system/bin:/system/bin 0 0
+KSU /system/etc overlay ro,seclabel,relatime,lowerdir=/data/adb/modules/hosts/system/etc:/system/etc 0 0
+/dev/block/dm-50 /data f2fs rw,lazytime,seclabel,nosuid,nodev,noatime 0 0

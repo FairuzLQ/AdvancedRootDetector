@@ -1,0 +1,6 @@
+15 1 0:1 / / ro,relatime - rootfs rootfs ro,seclabel
+30 15 0:20 / /sbin rw,relatime - tmpfs magisk rw,seclabel,mode=755
+60 15 179:40 / /system ro,relatime - ext4 /dev/block/bootdevice/by-name/system ro,seclabel,data=ordered
+61 60 179:66 /adb/modules/busybox-ndk/system/xbin /system/xbin ro,relatime - ext4 /dev/block/bootdevice/by-name/userdata rw,seclabel
+62 60 0:20 /.magisk/zygisk/libzygisk.so /system/lib64/libzygisk.so ro,relatime - tmpfs magisk ro,seclabel
+70 15 179:66 / /data rw,nosuid,nodev,noatime - ext4 /dev/block/bootdevice/by-name/userdata rw,seclabel

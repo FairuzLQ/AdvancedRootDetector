@@ -1,0 +1,2 @@
+KernelSU with SUSFS: uname/proc_version spoofed to stock, try_umount for all apps, maps and
+mounts sanitized, kstat spoofing. Represents the current state of the art in hiding.

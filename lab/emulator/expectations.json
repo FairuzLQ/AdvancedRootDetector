@@ -1,0 +1,25 @@
+{
+  "_doc": "must = indicator ids that have to fire on the emulator; mustnot = must not fire. Checked by check.py.",
+  "baseline": {
+    "must": ["emulator_build_props"],
+    "mustnot": ["debug_frida_threads", "debug_frida_maps", "debug_jdwp", "native_frida_port"]
+  },
+  "frida_server": {
+    "must": [],
+    "mustnot": ["debug_frida_threads"],
+    "note": "frida-server only (renamed fs64, not attached). /proc/net/tcp is SELinux-blocked for apps on Android 10+, so FRIDA_PORT is expected to be blind on API 30+."
+  },
+  "frida_attach": {
+    "must": ["debug_frida_threads"],
+    "mustnot": []
+  },
+  "jdwp_debugger": {
+    "must": ["debug_jdwp"],
+    "mustnot": []
+  },
+  "magisk": {
+    "must": [],
+    "mustnot": [],
+    "note": "Experimental: emulator rooted with rootAVD (Magisk). Report-only until the job is stable."
+  }
+}

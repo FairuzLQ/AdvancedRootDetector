@@ -1,0 +1,3 @@
+Standalone Zygisk implementation (ZygiskNext / ReZygisk / NeoZygisk) on KernelSU where the
+loader library is still mapped in the app process (module did not unload itself, e.g. a
+Zygisk module that keeps its .so resident).

@@ -1,0 +1,2 @@
+APatch (KernelPatch) on an Android 9 device where /proc is not hidepid-restricted.
+APatch keeps the stock kernel version string; the apd daemon lives at /data/adb/apd.

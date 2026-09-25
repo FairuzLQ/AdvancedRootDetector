@@ -1,0 +1,2 @@
+USER           PID  PPID     VSZ    RSS WCHAN            ADDR S NAME
+root           612     1   57164   4212 do_epoll_wait      0 S magiskd

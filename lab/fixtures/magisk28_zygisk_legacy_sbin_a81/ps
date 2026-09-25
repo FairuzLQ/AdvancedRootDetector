@@ -1,0 +1,5 @@
+USER           PID  PPID     VSZ    RSS WCHAN            ADDR S NAME
+root             1     0   22540   2172 SyS_epoll_wait      0 S init
+root           612     1   57164   4212 SyS_epoll_wait      0 S magiskd
+root           613   612   12032   1024 unix_stream_read_generic 0 S magiskd
+u0_a120       4411   780 1652332 90212 SyS_epoll_wait      0 S id.jayatech.rootdetector.app

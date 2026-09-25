@@ -1,0 +1,8 @@
+[ro.boot.verifiedbootstate]: [green]
+[ro.boot.vbmeta.device_state]: [locked]
+[ro.build.tags]: [release-keys]
+[ro.build.type]: [user]
+[ro.debuggable]: [0]
+[ro.secure]: [1]
+[ro.product.model]: [Pixel 8]
+[persist.vendor.radio.checksum_ok]: [1]

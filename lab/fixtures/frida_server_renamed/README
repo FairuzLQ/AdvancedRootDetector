@@ -1,0 +1,2 @@
+frida-server 16.x renamed to "fs64" in /data/local/tmp and started as root on the default
+port 27042 (listening on 0.0.0.0).

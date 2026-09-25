@@ -1,0 +1,2 @@
+lrwxrwxrwx 1 root root 0 2026-06-28 13:01 /proc/612/exe -> /sbin/magisk64
+lrwxrwxrwx 1 u0_a120 u0_a120 0 2026-06-28 13:01 /proc/4411/exe -> /system/bin/app_process64

@@ -1,0 +1,4 @@
+must debug_frida_maps
+must debug_frida_threads
+must native:fd
+mustnot native:maps

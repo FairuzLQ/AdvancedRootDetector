@@ -1,0 +1,4 @@
+must props_bootloader
+gap DenyList: Magisk mounts are removed from our namespace and /proc/1/mounts is unreadable on A10+ — mount_denylist cannot fire
+gap hidepid=2: magiskd is invisible to ps/comm/status from an untrusted_app
+gap Only signals left: unlocked bootloader + hardware Key Attestation (IntegrityDetector) and on-device native probes

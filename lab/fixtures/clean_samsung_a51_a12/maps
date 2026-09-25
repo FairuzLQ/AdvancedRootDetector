@@ -1,0 +1,6 @@
+12c00000-2ac00000 rw-p 00000000 00:00 0                                  [anon:dalvik-main space (region space)]
+7b1c2a5000-7b1c2a9000 r--s 00000000 fd:21 1835107                        /data/user/0/com.bank.app/files/checksums.db
+7b1c3f0000-7b1c3f8000 r--p 00000000 fd:21 1835299                        /data/user/0/com.bank.app/cache/ksu_ui_cache.bin
+7b3e0a1000-7b3e0f2000 r-xp 00000000 07:28 42                             /apex/com.android.runtime/lib64/bionic/libc.so
+7b4400a000-7b44012000 r-xp 00012000 fd:21 1835011                        /data/app/~~Zq8y3ksuQm==/com.bank.app-Ab3ksuX==/lib/arm64/libapp.so
+7fe1c0a000-7fe1c2b000 rw-p 00000000 00:00 0                              [stack]

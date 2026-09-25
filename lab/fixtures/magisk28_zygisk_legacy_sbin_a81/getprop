@@ -1,0 +1,4 @@
+[ro.boot.verifiedbootstate]: [orange]
+[ro.secureboot.lockstate]: [unlocked]
+[ro.build.tags]: [release-keys]
+[init.svc.magisk_service]: [stopped]

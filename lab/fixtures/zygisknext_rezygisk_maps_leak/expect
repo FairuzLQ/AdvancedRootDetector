@@ -1,0 +1,4 @@
+must zygisk_maps
+must native:maps
+must native:fd
+gap Well-behaved Zygisk modules dlclose themselves after specialize; the only residue is then anonymous memory (ANON_RWX/GHOST_LIB heuristics)

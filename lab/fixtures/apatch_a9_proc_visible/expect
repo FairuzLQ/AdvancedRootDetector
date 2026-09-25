@@ -1,0 +1,5 @@
+must magisk_proc_ps
+must magisk_exe_proc
+must native:uid0
+mustnot apatch_kernel
+gap APatch leaves /proc/version untouched — kernel string rules never fire for it
