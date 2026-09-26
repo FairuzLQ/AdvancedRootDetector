@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.7.0] — Device-Safety Detection
 
 ### New: device-safety detection (scam / remote-takeover / MITM) — a second axis
 Detection is no longer only about "is the OS tampered by an attacker"; it now also flags a
