@@ -46,7 +46,11 @@ The scan now runs on **real, stock phones** as a false-positive gate
 | Emulator API 28/30/34/35 | JDWP debugger | ✅ `debug_jdwp` |
 | Emulator API 30 | Magisk 26.4 (rootAVD) | ✅ 17 indicators |
 | Emulator | Magisk + Zygisk + DenyList | ⚠️ not testable — Zygisk does not load on emulator images |
-| Real phones (Test Lab) | Stock Pixel 11 / Nothing A069 / Samsung SC-51C | see release notes of the verification run |
+| Real phone (Test Lab) | Stock Google Pixel 11, Android 17 | ✅ no root indicator (only unlocked bootloader, MEDIUM) — scan 1.0 s |
+| Real phone (Test Lab) | Stock Nothing A069, Android 16 | ✅ no root indicator (only unlocked bootloader, MEDIUM) — scan 1.7 s |
+| Real phone (Test Lab) | Stock Samsung SC-51C, Android 16 | ✅ no root indicator (SELinux boot param now INFO) — scan 3.2 s |
+
+MagiskDetector on the real phones: 0.46 s / 0.78 s / 2.2 s (was 2–5 s in 1.6.0).
 
 ## [1.6.0] — Frida & Debugger Detection + False Positive Fixes
 
