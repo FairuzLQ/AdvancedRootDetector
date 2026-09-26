@@ -43,6 +43,9 @@ Detector/
 | `AccessibilityDetector` | Third-party accessibility services (scam/dropper vector); HIGH if a remote-control app holds a11y. **Device-safety axis** |
 | `RemoteAccessDetector` | Remote-control (TeamViewer, AnyDesk, RustDesk…) + screen-mirror apps installed. **Device-safety axis** |
 | `NetworkDetector` | MITM: user-installed CA (HIGH), system HTTP proxy (MEDIUM), active VPN/tunnel (INFO). **Device-safety axis** |
+| `NotificationListenerDetector` | Third-party notification listeners (read OTP/2FA from notifications); HIGH if a remote app. **Device-safety axis** |
+| `InputMethodDetector` | Non-system keyboard/IME — active (MEDIUM, keylogger risk) vs enabled (LOW). **Device-safety axis** |
+| `DangerousPermissionDetector` | Non-system apps with overlay/`SYSTEM_ALERT_WINDOW` (tapjacking) or SMS-read (OTP intercept). **Device-safety axis** |
 
 ## Key Design Decisions
 
@@ -52,9 +55,11 @@ Detector/
   INFO indicators never make `isRooted` true
 - **Two axes**: root/tamper (`isRooted` + `riskScore`) vs device-safety (`isDeviceAtRisk` +
   `deviceThreatScore`). The device-safety categories (`ACCESSIBILITY`, `REMOTE_ACCESS`,
-  `NETWORK`) describe a user in danger (scam/MITM), not a tampered OS, so they never flip
-  `isRooted`. `RootDetector.DEVICE_THREAT_CATEGORIES` is the split; `CleanDeviceScanTest`
-  ignores them (it is a *root* false-positive gate)
+  `NETWORK`, `NOTIFICATION`, `INPUT_METHOD`, `OVERLAY`, `SMS`) describe a user in danger
+  (scam/MITM), not a tampered OS, so they never flip `isRooted`.
+  `RootDetector.DEVICE_THREAT_CATEGORIES` is the split; `CleanDeviceScanTest` ignores them
+  (it is a *root* false-positive gate). System apps are filtered by `FLAG_SYSTEM`, not a
+  hand-maintained package list, to keep these low-false-positive
 - **Short keywords are tokens**: "ksu", "apd", "kali" must use `Rules.containsToken` /
   `sig::contains_token`, never substring (`ro.boot.emmc_checksum` contains "ksu")
 - **One getprop per scan**: `PropSnapshot` is shared by all detectors

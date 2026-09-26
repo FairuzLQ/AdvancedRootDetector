@@ -33,7 +33,11 @@ object RootDetector {
     private val DEVICE_THREAT_CATEGORIES = setOf(
         DetectorCategory.ACCESSIBILITY,
         DetectorCategory.REMOTE_ACCESS,
-        DetectorCategory.NETWORK
+        DetectorCategory.NETWORK,
+        DetectorCategory.NOTIFICATION,
+        DetectorCategory.INPUT_METHOD,
+        DetectorCategory.OVERLAY,
+        DetectorCategory.SMS
     )
 
     /**
@@ -71,7 +75,10 @@ object RootDetector {
             ToolingDetector(context, props),
             AccessibilityDetector(context, props),
             RemoteAccessDetector(context, props),
-            NetworkDetector(context, props)
+            NetworkDetector(context, props),
+            NotificationListenerDetector(context, props),
+            InputMethodDetector(context, props),
+            DangerousPermissionDetector(context, props)
         )
 
         val allIndicators = mutableListOf<RootIndicator>()

@@ -60,4 +60,12 @@ class DeviceSafetyRulesTest {
         assertTrue(Rules.isUserCaAlias("user:1234"))
         assertFalse(Rules.isUserCaAlias("system:1234"))
     }
+
+    @Test fun parsesFlattenedComponentList() {
+        // Used for enabled notification listeners as well as accessibility services.
+        val s = "com.foo/.NL:com.bar/com.bar.Listener: :junk"
+        assertEquals(listOf("com.foo/.NL", "com.bar/com.bar.Listener"), Rules.parseFlattenedComponents(s))
+        assertEquals("com.foo", Rules.flattenedComponentPackage("com.foo/.NL"))
+        assertTrue(Rules.parseFlattenedComponents(null).isEmpty())
+    }
 }

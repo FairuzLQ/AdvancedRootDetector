@@ -53,7 +53,11 @@ class CleanDeviceScanTest {
         val DEVICE_THREAT_CATEGORIES = setOf(
             DetectorCategory.ACCESSIBILITY,
             DetectorCategory.REMOTE_ACCESS,
-            DetectorCategory.NETWORK
+            DetectorCategory.NETWORK,
+            DetectorCategory.NOTIFICATION,
+            DetectorCategory.INPUT_METHOD,
+            DetectorCategory.OVERLAY,
+            DetectorCategory.SMS
         )
     }
 }

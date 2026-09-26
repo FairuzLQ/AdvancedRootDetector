@@ -26,7 +26,11 @@ enum class DetectorCategory {
     // These never make DetectionResult.isRooted true; they feed deviceThreatScore instead.
     ACCESSIBILITY,   // scam apps abusing an Accessibility service (read screen / auto-tap)
     REMOTE_ACCESS,   // remote control / screen-sharing apps (TeamViewer, AnyDesk, screen-mirror)
-    NETWORK          // MITM: system HTTP proxy, user-installed CA, active VPN tunnel
+    NETWORK,         // MITM: system HTTP proxy, user-installed CA, active VPN tunnel
+    NOTIFICATION,    // notification listener services (can read OTP codes in notifications)
+    INPUT_METHOD,    // third-party keyboard / IME (a keylogger sees everything typed)
+    OVERLAY,         // apps able to draw over others (tapjacking / fake-login overlays)
+    SMS              // non-system apps that can read incoming SMS (OTP interception)
 }
 
 data class RootIndicator(

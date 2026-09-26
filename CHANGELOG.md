@@ -14,6 +14,18 @@ Detection is no longer only about "is the OS tampered by an attacker"; it now al
 - **`NetworkDetector`** (MITM) — user-installed CA certificate (HIGH, the classic HTTPS
   interception setup), system HTTP proxy (MEDIUM), active VPN/tunnel (INFO).
 
+More on-device scam vectors, same axis:
+
+- **`NotificationListenerDetector`** — a third-party notification listener reads the text of
+  every notification, including banking OTPs and 2FA codes (MEDIUM; HIGH if a remote-control app).
+- **`InputMethodDetector`** — a non-system keyboard sees every keystroke. Active keyboard =
+  MEDIUM (keylogger risk); merely enabled = LOW.
+- **`DangerousPermissionDetector`** — non-system apps with overlay (`SYSTEM_ALERT_WINDOW`,
+  tapjacking / fake-login overlays, MEDIUM) or SMS-read (OTP interception, LOW).
+
+System vs third-party is decided by `FLAG_SYSTEM`, not a package list, so stock keyboards /
+launchers / dialers do not false-positive. All permission-free.
+
 New result fields `DetectionResult.isDeviceAtRisk` and `deviceThreatScore` carry this second
 axis; `isRooted`/`riskScore` keep their exact old meaning (root/tamper only).
 

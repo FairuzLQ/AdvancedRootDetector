@@ -375,15 +375,24 @@ internal object Rules {
     )
 
     /**
-     * Parse Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES ("pkg1/svc1:pkg2/svc2") into the
-     * list of enabled component strings. Handles blanks, trailing separators and stray spaces.
+     * Parse a colon-separated list of flattened components ("pkg1/svc1:pkg2/svc2") as used by
+     * several Settings.Secure keys (enabled accessibility services, enabled notification
+     * listeners…). Handles blanks, trailing separators and stray spaces.
      */
-    fun parseEnabledAccessibilityServices(setting: String?): List<String> =
+    fun parseFlattenedComponents(setting: String?): List<String> =
         setting.orEmpty().split(':').map { it.trim() }.filter { it.contains('/') }
+
+    /** Package name from a flattened component string "pkg/.ServiceClass". */
+    fun flattenedComponentPackage(component: String): String =
+        component.substringBefore('/').trim()
+
+    /** Parse Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES into component strings. */
+    fun parseEnabledAccessibilityServices(setting: String?): List<String> =
+        parseFlattenedComponents(setting)
 
     /** Package name from an accessibility component string "pkg/.ServiceClass". */
     fun accessibilityComponentPackage(component: String): String =
-        component.substringBefore('/').trim()
+        flattenedComponentPackage(component)
 
     /** True if this accessibility component belongs to stock/system software (not a threat). */
     fun isSystemAccessibilityComponent(component: String): Boolean {
