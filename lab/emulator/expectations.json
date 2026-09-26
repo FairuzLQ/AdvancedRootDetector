@@ -41,9 +41,16 @@
     ]
   },
   "magisk": {
-    "must": [],
+    "must": [
+      "magisk_pkg",
+      "magisk_bins",
+      "mount_magisk_tmpfs",
+      "mount_module_bind",
+      "native_su_bin",
+      "binary_su"
+    ],
     "mustnot": [],
-    "note": "Magisk (rootAVD) default config: Zygisk off, DenyList off. Report-only."
+    "note": "Magisk (rootAVD) default config: Zygisk off, DenyList off. Must catch Magisk across the Java (pkg/bins), mount (tmpfs + module bind) and native-syscall (su via SYS_newfstatat) layers."
   },
   "frida_hook": {
     "must": [
@@ -54,13 +61,24 @@
     "note": "Frida agent attached AND an Interceptor hook placed on libc open() \u2014 the inline-hook check must see the patched prologue."
   },
   "magisk_zygisk": {
-    "must": [],
+    "must": [
+      "magisk_pkg",
+      "magisk_bins",
+      "mount_magisk_tmpfs",
+      "mount_module_bind",
+      "native_su_bin",
+      "binary_su"
+    ],
     "mustnot": [],
-    "note": "Magisk with Zygisk enabled, app NOT on the DenyList. Report-only. NOTE: on the google_apis x86_64 (arm64-translation) image Zygisk does not load (native-bridge conflict), so this currently equals plain Magisk \u2014 hiding is NOT exercised yet."
+    "note": "Magisk with Zygisk enabled, app NOT on the DenyList. NOTE: on the google_apis x86_64 (arm64-translation) image Zygisk does not load (native-bridge conflict), so this currently equals plain Magisk \u2014 runtime hiding is NOT exercised yet; the AOSP 'default' image is where Zygisk activates."
   },
   "magisk_zygisk_denylist": {
-    "must": [],
+    "must": [
+      "magisk_bins",
+      "mount_module_bind",
+      "native_su_bin"
+    ],
     "mustnot": [],
-    "note": "Magisk + Zygisk + DenyList enforced for this app \u2014 what survives Magisk's own hiding. Report-only. NOTE: on the google_apis x86_64 (arm64-translation) image Zygisk does not load (native-bridge conflict), so this currently equals plain Magisk \u2014 hiding is NOT exercised yet."
+    "note": "Magisk + Zygisk + DenyList enforced for this app \u2014 what survives Magisk's own hiding. The DenyList unmounts Magisk's own bind-mounts in the app's namespace and hides the app from the manager, but it cannot hide the su binary from a raw SYS_newfstatat syscall (native_su_bin) or the module bind-mounts left in mountinfo (mount_module_bind); those are the must-fire proof that hidden Magisk is still caught. NOTE: on the google_apis x86_64 (arm64-translation) image Zygisk does not load (native-bridge conflict), so DenyList is not truly active here \u2014 full hiding is exercised only on an image where Zygisk loads (AOSP 'default') or on a real device."
   }
 }

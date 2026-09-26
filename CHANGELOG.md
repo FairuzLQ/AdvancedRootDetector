@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Lab — Magisk detection is now a real gate (was report-only)
+The three emulator Magisk scenarios (plain, +Zygisk, +Zygisk +DenyList) now assert the
+indicators that must fire, so a regression that silently breaks Magisk detection fails the
+check instead of passing quietly. The DenyList (hiding) scenario specifically asserts the
+signals that survive Magisk's own hiding — the su binary via a raw `SYS_newfstatat` syscall
+(`native_su_bin`) and the module bind-mounts left in `mountinfo` (`mount_module_bind`) —
+which the Java/package layer cannot see once DenyList is enforced.
+
 ## [1.6.1] — Real-Device False Positive Fixes + Inline Hook Detection
 
 ## What's New
