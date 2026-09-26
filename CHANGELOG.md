@@ -34,14 +34,16 @@ The scan now runs on **real, stock phones** as a false-positive gate
 ## Lab
 - Real Magisk on emulators (rootAVD), Frida hook scenario, API 28–35 matrix, libFuzzer over the
   native rules, weekly scheduled run
+- API 28 "timeouts" were a lab bug, not an app hang: the result check used `run-as <pkg> test`,
+  and Android 9 has no `/system/bin/test`. The scans themselves had finished correctly
 - Rule lab: 17 scenarios incl. 2 captured from real Test Lab phones as regression fixtures
 
 ## Test Results
 
 | Where | Scenario | Result |
 |---|---|---|
-| Emulator API 30/34/35 | Frida 17 attached + hook on `open()` | ✅ `native_inline_hook`, `debug_frida_threads`, `debug_frida_maps` |
-| Emulator API 30/34/35 | JDWP debugger | ✅ `debug_jdwp` |
+| Emulator API 28/30/34/35 | Frida 17 attached + hook on `open()` | ✅ `native_inline_hook`, `debug_frida_threads`, `debug_frida_maps` |
+| Emulator API 28/30/34/35 | JDWP debugger | ✅ `debug_jdwp` |
 | Emulator API 30 | Magisk 26.4 (rootAVD) | ✅ 17 indicators |
 | Emulator | Magisk + Zygisk + DenyList | ⚠️ not testable — Zygisk does not load on emulator images |
 | Real phones (Test Lab) | Stock Pixel 11 / Nothing A069 / Samsung SC-51C | see release notes of the verification run |
