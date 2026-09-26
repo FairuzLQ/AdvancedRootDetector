@@ -182,6 +182,25 @@ class MainActivity : AppCompatActivity() {
         }
         verdictCard.addView(scoreText)
 
+        // Device-safety axis (scam / remote control / MITM) — separate from the root verdict.
+        if (result.isDeviceAtRisk) {
+            val deviceCard = cardView(root, Color.parseColor("#4A148C"), padV = 20)
+            deviceCard.addView(TextView(this).apply {
+                text = "🛡  DEVICE-SAFETY WARNING"
+                textSize = 15f
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+            })
+            deviceCard.addView(TextView(this).apply {
+                text = "Accessibility / remote-control / MITM signals: ${result.deviceThreatScore}/100.\n" +
+                    "Not root — but review these before banking or entering codes."
+                textSize = 12f
+                setTextColor(Color.parseColor("#E1BEE7"))
+                gravity = Gravity.CENTER
+                setPadding(0, 10, 0, 0)
+            })
+        }
+
         if (result.indicators.isEmpty()) {
             val clean = TextView(this).apply {
                 text = "No root artifacts detected on this device."
@@ -310,6 +329,8 @@ class MainActivity : AppCompatActivity() {
         val json = org.json.JSONObject().apply {
             put("isRooted", result.isRooted)
             put("riskScore", result.riskScore)
+            put("isDeviceAtRisk", result.isDeviceAtRisk)
+            put("deviceThreatScore", result.deviceThreatScore)
             put("sdk", android.os.Build.VERSION.SDK_INT)
             put("timingsMs", org.json.JSONObject(result.timingsMs))
             put("indicators", org.json.JSONArray().apply {

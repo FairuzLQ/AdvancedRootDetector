@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### New: device-safety detection (scam / remote-takeover / MITM) — a second axis
+Detection is no longer only about "is the OS tampered by an attacker"; it now also flags a
+**normal user in danger**, without any new permission and without ever flipping `isRooted`:
+
+- **`AccessibilityDetector`** — a third-party Accessibility service (can read the screen and
+  tap for you) is the #1 scam vector. Stock screen readers, Switch Access and password-manager
+  autofill are filtered out; a remote-control app holding accessibility is escalated to HIGH.
+- **`RemoteAccessDetector`** — remote-control (TeamViewer, AnyDesk, RustDesk, AirDroid…) and
+  screen-mirroring apps installed. The "install AnyDesk so I can help you" refund/bank scam.
+- **`NetworkDetector`** (MITM) — user-installed CA certificate (HIGH, the classic HTTPS
+  interception setup), system HTTP proxy (MEDIUM), active VPN/tunnel (INFO).
+
+New result fields `DetectionResult.isDeviceAtRisk` and `deviceThreatScore` carry this second
+axis; `isRooted`/`riskScore` keep their exact old meaning (root/tamper only).
+
 ### Lab — Magisk detection is now a real gate (was report-only)
 The three emulator Magisk scenarios (plain, +Zygisk, +Zygisk +DenyList) now assert the
 indicators that must fire, so a regression that silently breaks Magisk detection fails the

@@ -40,6 +40,9 @@ Detector/
 | `EmulatorDetector` | Build props, emulator device nodes, cpuinfo, missing sensors |
 | `DebugDetector` | JDWP debugger, ptrace TracerPid, Frida agent threads + maps (incl. repackaged gadget) |
 | `ToolingDetector` | Hail, Ice Box, Shizuku, Dhizuku, HMA, Lucky Patcher… — INFO only (not root proof) |
+| `AccessibilityDetector` | Third-party accessibility services (scam/dropper vector); HIGH if a remote-control app holds a11y. **Device-safety axis** |
+| `RemoteAccessDetector` | Remote-control (TeamViewer, AnyDesk, RustDesk…) + screen-mirror apps installed. **Device-safety axis** |
+| `NetworkDetector` | MITM: user-installed CA (HIGH), system HTTP proxy (MEDIUM), active VPN/tunnel (INFO). **Device-safety axis** |
 
 ## Key Design Decisions
 
@@ -47,6 +50,11 @@ Detector/
   strings go through `sig::jni_safe` before `NewStringUTF`
 - **Risk scoring**: CRITICAL=50pts, HIGH=30, MEDIUM=15, LOW=5, INFO=0; capped at 100.
   INFO indicators never make `isRooted` true
+- **Two axes**: root/tamper (`isRooted` + `riskScore`) vs device-safety (`isDeviceAtRisk` +
+  `deviceThreatScore`). The device-safety categories (`ACCESSIBILITY`, `REMOTE_ACCESS`,
+  `NETWORK`) describe a user in danger (scam/MITM), not a tampered OS, so they never flip
+  `isRooted`. `RootDetector.DEVICE_THREAT_CATEGORIES` is the split; `CleanDeviceScanTest`
+  ignores them (it is a *root* false-positive gate)
 - **Short keywords are tokens**: "ksu", "apd", "kali" must use `Rules.containsToken` /
   `sig::contains_token`, never substring (`ro.boot.emmc_checksum` contains "ksu")
 - **One getprop per scan**: `PropSnapshot` is shared by all detectors

@@ -33,7 +33,8 @@ class CleanDeviceScanTest {
         result.indicators.forEach { Log.i(TAG, "[${it.risk}] ${it.id} ${it.evidence.take(3)}") }
 
         val unexpected = result.indicators.filter {
-            it.risk > RiskLevel.INFO && it.category != DetectorCategory.EMULATOR && it.id !in UNLOCKED_BOOTLOADER
+            it.risk > RiskLevel.INFO && it.category != DetectorCategory.EMULATOR &&
+                it.category !in DEVICE_THREAT_CATEGORIES && it.id !in UNLOCKED_BOOTLOADER
         }
         assertTrue(
             "False positive on stock device $device:\n" + unexpected.joinToString("\n") {
@@ -46,5 +47,13 @@ class CleanDeviceScanTest {
     private companion object {
         const val TAG = "RDLAB"
         val UNLOCKED_BOOTLOADER = setOf("props_bootloader", "integrity_key_attest")
+
+        // Device-safety axis (scam/MITM signals about the environment, not a tampered OS).
+        // This test is a *root* false-positive gate, so these categories are out of scope here.
+        val DEVICE_THREAT_CATEGORIES = setOf(
+            DetectorCategory.ACCESSIBILITY,
+            DetectorCategory.REMOTE_ACCESS,
+            DetectorCategory.NETWORK
+        )
     }
 }

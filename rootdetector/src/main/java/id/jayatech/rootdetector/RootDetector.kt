@@ -3,6 +3,7 @@ package id.jayatech.rootdetector
 import android.content.Context
 import id.jayatech.rootdetector.detector.*
 import id.jayatech.rootdetector.model.DetectionResult
+import id.jayatech.rootdetector.model.DetectorCategory
 import id.jayatech.rootdetector.model.RiskLevel
 import id.jayatech.rootdetector.model.RootIndicator
 
@@ -22,6 +23,17 @@ object RootDetector {
         RiskLevel.MEDIUM to 15,
         RiskLevel.HIGH to 30,
         RiskLevel.CRITICAL to 50
+    )
+
+    /**
+     * Device-safety categories: scam/fraud signals about the user's environment, not a tampered
+     * OS. They are scored on a separate axis (deviceThreatScore) and never make isRooted true —
+     * a phone with a legitimate remote-support app or a corporate VPN is not "rooted".
+     */
+    private val DEVICE_THREAT_CATEGORIES = setOf(
+        DetectorCategory.ACCESSIBILITY,
+        DetectorCategory.REMOTE_ACCESS,
+        DetectorCategory.NETWORK
     )
 
     /**
@@ -56,7 +68,10 @@ object RootDetector {
             IntegrityDetector(context, props),
             EmulatorDetector(context, props),
             DebugDetector(context, props),
-            ToolingDetector(context, props)
+            ToolingDetector(context, props),
+            AccessibilityDetector(context, props),
+            RemoteAccessDetector(context, props),
+            NetworkDetector(context, props)
         )
 
         val allIndicators = mutableListOf<RootIndicator>()
@@ -71,7 +86,15 @@ object RootDetector {
             timings[detector.javaClass.simpleName] = (System.nanoTime() - start) / 1_000_000
         }
 
-        val score = allIndicators
+        val (deviceIndicators, rootIndicators) =
+            allIndicators.partition { it.category in DEVICE_THREAT_CATEGORIES }
+
+        // Root/tamper score (unchanged meaning): only root-axis indicators feed it.
+        val score = rootIndicators
+            .sumOf { RISK_WEIGHTS[it.risk] ?: 0 }
+            .coerceAtMost(100)
+
+        val deviceScore = deviceIndicators
             .sumOf { RISK_WEIGHTS[it.risk] ?: 0 }
             .coerceAtMost(100)
 
@@ -87,11 +110,14 @@ object RootDetector {
         }
 
         return DetectionResult(
-            isRooted = allIndicators.any { it.risk > RiskLevel.INFO },
+            // Root verdict is root-axis only: device-safety signals never flip it.
+            isRooted = rootIndicators.any { it.risk > RiskLevel.INFO },
             riskScore = score,
             indicators = allIndicators,
             summary = summary,
-            timingsMs = timings
+            timingsMs = timings,
+            deviceThreatScore = deviceScore,
+            isDeviceAtRisk = deviceIndicators.any { it.risk > RiskLevel.INFO }
         )
     }
 
@@ -100,5 +126,7 @@ object RootDetector {
      * Note: [DetectionResult.isRooted] is broader (any LOW+ indicator, e.g. unlocked bootloader).
      */
     fun isRooted(context: Context): Boolean =
-        scan(context).indicators.any { it.risk >= RiskLevel.HIGH }
+        scan(context).indicators.any {
+            it.risk >= RiskLevel.HIGH && it.category !in DEVICE_THREAT_CATEGORIES
+        }
 }

@@ -20,7 +20,13 @@ enum class DetectorCategory {
     INTEGRITY,
     EMULATOR,
     DEBUG,
-    TOOLING
+    TOOLING,
+
+    // ---- Device-safety axis (not root/tamper of the OS, but the user in danger) ----
+    // These never make DetectionResult.isRooted true; they feed deviceThreatScore instead.
+    ACCESSIBILITY,   // scam apps abusing an Accessibility service (read screen / auto-tap)
+    REMOTE_ACCESS,   // remote control / screen-sharing apps (TeamViewer, AnyDesk, screen-mirror)
+    NETWORK          // MITM: system HTTP proxy, user-installed CA, active VPN tunnel
 }
 
 data class RootIndicator(

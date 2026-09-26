@@ -310,4 +310,127 @@ internal object Rules {
         l.contains("frida-agent", true) || l.contains("frida-gadget", true) ||
             l.contains("libfrida", true) || l.contains("memfd:frida", true) || l.contains("gum-js", true)
     }.map { it.trim() }
+
+    // -------------------------------------------------------------------------
+    // Device-safety axis: accessibility abuse, remote access / screen share, MITM.
+    // These describe a user in danger (scam / fraud), not a rooted OS, so they are scored
+    // on a separate axis and never flip isRooted.
+    // -------------------------------------------------------------------------
+
+    /**
+     * Remote-control apps. Legitimate for IT support, but the #1 vector for "refund"/bank
+     * scams: the victim is talked into installing one so the scammer drives the phone.
+     */
+    val REMOTE_CONTROL_PACKAGES = linkedMapOf(
+        "com.teamviewer.quicksupport.market" to "TeamViewer QuickSupport",
+        "com.teamviewer.teamviewer.market.mobile" to "TeamViewer",
+        "com.anydesk.anydeskandroid" to "AnyDesk",
+        "com.sand.airdroid" to "AirDroid",
+        "com.sand.airmirror" to "AirMirror",
+        "com.rustdesk.rustdesk" to "RustDesk",
+        "com.microsoft.rdc.androidx" to "Microsoft Remote Desktop",
+        "com.google.chromeremotedesktop" to "Chrome Remote Desktop",
+        "com.splashtop.remote.pad.v2hd" to "Splashtop",
+        "com.qihoo.antivirus" to "360 Remote (support)",
+        "com.aircast.control" to "AirControl",
+        "com.monect.core" to "Monect Remote",
+        "org.libvncserver" to "VNC server",
+        "com.realvnc.viewer.android" to "RealVNC Viewer",
+        "com.iiordanov.freebVNC" to "bVNC",
+        "com.zoho.assist.agent" to "Zoho Assist",
+    )
+
+    /** Screen-mirroring / casting apps — used for "share your screen with support" scams. */
+    val SCREEN_SHARE_PACKAGES = linkedMapOf(
+        "com.apowersoft.mirror" to "ApowerMirror",
+        "com.apowersoft.mirrorcast" to "ApowerMirror Cast",
+        "com.letv.leui.screenshare" to "Screen Share",
+        "com.miui.miscreenrecorder" to "MIUI Screen Recorder",
+        "com.instantbits.cast.webvideo" to "Web Video Cast",
+        "de.tutao.screencast" to "Screen Cast",
+        "com.connectsdk.screenmirror" to "Screen Mirror",
+    )
+
+    /**
+     * Accessibility service components that ship on stock/system software (screen readers,
+     * password managers, launchers). Enabling these is normal, so they must NOT be flagged.
+     * Matched by package prefix against the component's package.
+     */
+    private val SYSTEM_A11Y_PACKAGE_PREFIXES = listOf(
+        "com.google.android.marvin.talkback",   // TalkBack
+        "com.android.talkback",
+        "com.samsung.android.accessibility",
+        "com.samsung.accessibility",
+        "com.google.android.accessibility",      // Select to Speak, Switch Access, Live Transcribe
+        "com.google.android.apps.accessibility",
+        "com.android.switchaccess",
+        "com.android.settings",                  // built-in accessibility shortcuts
+    )
+
+    /** Well-known password managers that legitimately use an accessibility service to autofill. */
+    private val PASSWORD_MANAGER_PREFIXES = listOf(
+        "com.lastpass.lpandroid", "com.agilebits.onepassword", "com.dashlane",
+        "com.keepersecurity.android", "com.bitwarden", "com.x8bit.bitwarden",
+        "com.microsoft.authenticator", "com.google.android.apps.authenticator2",
+    )
+
+    /**
+     * Parse Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES ("pkg1/svc1:pkg2/svc2") into the
+     * list of enabled component strings. Handles blanks, trailing separators and stray spaces.
+     */
+    fun parseEnabledAccessibilityServices(setting: String?): List<String> =
+        setting.orEmpty().split(':').map { it.trim() }.filter { it.contains('/') }
+
+    /** Package name from an accessibility component string "pkg/.ServiceClass". */
+    fun accessibilityComponentPackage(component: String): String =
+        component.substringBefore('/').trim()
+
+    /** True if this accessibility component belongs to stock/system software (not a threat). */
+    fun isSystemAccessibilityComponent(component: String): Boolean {
+        val pkg = accessibilityComponentPackage(component)
+        return SYSTEM_A11Y_PACKAGE_PREFIXES.any { pkg == it || pkg.startsWith("$it.") } ||
+            PASSWORD_MANAGER_PREFIXES.any { pkg == it || pkg.startsWith("$it.") }
+    }
+
+    /**
+     * Third-party accessibility component packages worth reporting: everything enabled that is
+     * not stock/system. Returns the distinct package names.
+     */
+    fun thirdPartyAccessibilityPackages(setting: String?): List<String> =
+        parseEnabledAccessibilityServices(setting)
+            .filterNot { isSystemAccessibilityComponent(it) }
+            .map { accessibilityComponentPackage(it) }
+            .filter { it.isNotEmpty() }
+            .distinct()
+
+    /** A system HTTP proxy is "set" if the host is non-empty and the port is a real port. */
+    fun proxyIsSet(host: String?, port: String?): Boolean {
+        val h = host?.trim().orEmpty()
+        if (h.isEmpty() || h.equals("null", true)) return false
+        val p = port?.trim()?.toIntOrNull() ?: return false
+        return p in 1..65535
+    }
+
+    /** Parse the single-string Settings.Global.HTTP_PROXY ("host:port") into (host, port). */
+    fun parseHttpProxySetting(value: String?): Pair<String, String>? {
+        val v = value?.trim().orEmpty()
+        if (v.isEmpty() || v == ":0" || v.equals("null", true)) return null
+        val host = v.substringBeforeLast(':', v)
+        val port = v.substringAfterLast(':', "")
+        return if (host.isNotEmpty()) host to port else null
+    }
+
+    /** Network interface names that indicate a VPN/tunnel is up (tun0, ppp0, tap0, ipsec0). */
+    fun isVpnInterfaceName(name: String): Boolean {
+        val n = name.trim().lowercase()
+        return listOf("tun", "tap", "ppp", "ipsec", "wireguard", "wg").any { p ->
+            n == p || (n.startsWith(p) && n.length > p.length && (n[p.length].isDigit() || n[p.length] == '-'))
+        }
+    }
+
+    /**
+     * A user-added CA in the AndroidCAStore is aliased "user:<n>"; a system CA is "system:<n>".
+     * A user CA is the classic enabler of TLS interception (a proxy's root cert installed).
+     */
+    fun isUserCaAlias(alias: String): Boolean = alias.trim().startsWith("user:", ignoreCase = true)
 }
