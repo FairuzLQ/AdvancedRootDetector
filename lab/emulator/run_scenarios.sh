@@ -45,9 +45,11 @@ start_app() {
 collect() {
     local name="$1"
     for _ in $(seq 1 120); do
-        if adb shell run-as "$PKG" test -s "files/$name.json" 2>/dev/null; then
-            sleep 1  # let the write finish
-            adb exec-out run-as "$PKG" cat "files/$name.json" > "$OUT_DIR/$name.json"
+        # No `run-as <pkg> test`: run-as execs a binary and API 28 has no /system/bin/test
+        # (only the shell builtin), so the check always failed there. The app writes the file
+        # atomically (tmp + rename), so a readable, valid JSON file is a finished result.
+        adb exec-out run-as "$PKG" cat "files/$name.json" > "$OUT_DIR/$name.json" 2>/dev/null
+        if python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$OUT_DIR/$name.json" 2>/dev/null; then
             echo "saved $OUT_DIR/$name.json ($(grep -c '"id"' "$OUT_DIR/$name.json") indicators)"
             return 0
         fi

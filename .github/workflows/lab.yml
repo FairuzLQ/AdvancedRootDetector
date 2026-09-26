@@ -80,7 +80,7 @@ jobs:
     needs: build-apk
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    # API 28 is still being stabilised (hung in run #8) — report-only until it is green.
+    # API 28: report-only until the run-as/test fix (collect()) has been green for a while.
     continue-on-error: ${{ matrix.api == 28 }}
     strategy:
       fail-fast: false
