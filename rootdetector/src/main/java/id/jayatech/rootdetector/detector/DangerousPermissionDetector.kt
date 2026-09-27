@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import id.jayatech.rootdetector.model.DetectorCategory
 import id.jayatech.rootdetector.model.RiskLevel
 import id.jayatech.rootdetector.model.RootIndicator
+import id.jayatech.rootdetector.rules.Rules
 
 /**
  * Non-system apps holding permissions that enable on-device fraud. One pass over the installed
@@ -37,6 +38,7 @@ internal class DangerousPermissionDetector(context: Context, props: PropSnapshot
         for (pi in packages) {
             val ai = pi.applicationInfo ?: continue
             if (pi.packageName == self) continue
+            if (Rules.isTestInfrastructurePackage(pi.packageName)) continue
             if ((ai.flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0) continue
 
             if (isGranted(pi, "android.permission.SYSTEM_ALERT_WINDOW")) {

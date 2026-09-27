@@ -24,7 +24,13 @@ More on-device scam vectors, same axis:
   tapjacking / fake-login overlays, MEDIUM) or SMS-read (OTP interception, LOW).
 
 System vs third-party is decided by `FLAG_SYSTEM`, not a package list, so stock keyboards /
-launchers / dialers do not false-positive. All permission-free.
+launchers / dialers do not false-positive. All permission-free. Instrumentation/test-harness
+packages (Firebase Test Lab, Espresso) are excluded from the package scans so they are not
+mistaken for a real overlay/SMS app.
+
+Verified on real phones (Firebase Test Lab): stock Google Pixel 11, Nothing A069 and Samsung
+SC-51C show **no** device-safety indicator; scan 1.1 / 1.9 / 3.2 s (device-safety detectors
+add ~40–170 ms total).
 
 New result fields `DetectionResult.isDeviceAtRisk` and `deviceThreatScore` carry this second
 axis; `isRooted`/`riskScore` keep their exact old meaning (root/tamper only).

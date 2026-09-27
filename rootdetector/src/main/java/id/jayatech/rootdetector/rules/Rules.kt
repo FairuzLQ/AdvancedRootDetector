@@ -442,4 +442,19 @@ internal object Rules {
      * A user CA is the classic enabler of TLS interception (a proxy's root cert installed).
      */
     fun isUserCaAlias(alias: String): Boolean = alias.trim().startsWith("user:", ignoreCase = true)
+
+    /**
+     * Instrumentation / test-harness packages installed only while an automated test runs
+     * (Firebase Test Lab, Espresso, the AndroidX test orchestrator). They are never present on
+     * a real user's device, so the package scans skip them — otherwise the lab flags its own
+     * harness (the test-services APK holds SYSTEM_ALERT_WINDOW and is not a system app).
+     */
+    val TEST_INFRASTRUCTURE_PACKAGES = setOf(
+        "androidx.test.services",
+        "androidx.test.orchestrator",
+        "com.google.android.apps.common.testing.services",
+        "com.google.android.apps.common.testing.services.test",
+    )
+
+    fun isTestInfrastructurePackage(pkg: String): Boolean = pkg in TEST_INFRASTRUCTURE_PACKAGES
 }

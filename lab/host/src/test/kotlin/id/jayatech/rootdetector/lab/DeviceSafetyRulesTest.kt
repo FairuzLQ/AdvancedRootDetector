@@ -61,6 +61,13 @@ class DeviceSafetyRulesTest {
         assertFalse(Rules.isUserCaAlias("system:1234"))
     }
 
+    @Test fun testInfrastructurePackagesAreExcluded() {
+        // Firebase Test Lab / Espresso harness holds SYSTEM_ALERT_WINDOW but is not on a user device.
+        assertTrue(Rules.isTestInfrastructurePackage("com.google.android.apps.common.testing.services"))
+        assertTrue(Rules.isTestInfrastructurePackage("androidx.test.services"))
+        assertFalse(Rules.isTestInfrastructurePackage("com.anydesk.anydeskandroid"))
+    }
+
     @Test fun parsesFlattenedComponentList() {
         // Used for enabled notification listeners as well as accessibility services.
         val s = "com.foo/.NL:com.bar/com.bar.Listener: :junk"
