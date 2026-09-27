@@ -57,7 +57,8 @@ class CleanDeviceScanTest {
             DetectorCategory.NOTIFICATION,
             DetectorCategory.INPUT_METHOD,
             DetectorCategory.OVERLAY,
-            DetectorCategory.SMS
+            DetectorCategory.SMS,
+            DetectorCategory.DEVICE_ADMIN
         )
     }
 }

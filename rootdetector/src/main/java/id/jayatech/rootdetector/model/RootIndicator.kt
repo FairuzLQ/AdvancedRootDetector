@@ -30,7 +30,8 @@ enum class DetectorCategory {
     NOTIFICATION,    // notification listener services (can read OTP codes in notifications)
     INPUT_METHOD,    // third-party keyboard / IME (a keylogger sees everything typed)
     OVERLAY,         // apps able to draw over others (tapjacking / fake-login overlays)
-    SMS              // non-system apps that can read incoming SMS (OTP interception)
+    SMS,             // non-system apps that can read incoming SMS (OTP interception)
+    DEVICE_ADMIN     // non-system device admin / device owner (lockers, stalkerware, remote wipe)
 }
 
 data class RootIndicator(

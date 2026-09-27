@@ -37,7 +37,8 @@ object RootDetector {
         DetectorCategory.NOTIFICATION,
         DetectorCategory.INPUT_METHOD,
         DetectorCategory.OVERLAY,
-        DetectorCategory.SMS
+        DetectorCategory.SMS,
+        DetectorCategory.DEVICE_ADMIN
     )
 
     /**
@@ -78,7 +79,8 @@ object RootDetector {
             NetworkDetector(context, props),
             NotificationListenerDetector(context, props),
             InputMethodDetector(context, props),
-            DangerousPermissionDetector(context, props)
+            DangerousPermissionDetector(context, props),
+            DeviceAdminDetector(context, props)
         )
 
         val allIndicators = mutableListOf<RootIndicator>()

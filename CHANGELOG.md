@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### `DeviceAdminDetector` — device-admin / device-owner abuse (device-safety axis)
+A non-system app holding device-administrator rights can lock or wipe the phone and cannot be
+uninstalled until the right is revoked — the mechanism behind screen-locker ransomware and
+stalkerware. Reports third-party active admins (MEDIUM), and escalates a non-system Device
+Owner or a remote-control app with admin rights to HIGH. System MDM/"find my device" apps are
+filtered by `FLAG_SYSTEM`. Permission-free; never flips `isRooted`.
+
 ## [1.7.0] — Device-Safety Detection
 
 ### New: device-safety detection (scam / remote-takeover / MITM) — a second axis
