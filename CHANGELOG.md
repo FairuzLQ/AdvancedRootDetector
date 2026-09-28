@@ -1,6 +1,12 @@
 # Changelog
 
-## [Unreleased]
+## [1.8.0] — Runtime Screen Guard + Device-Admin Detection
+
+### Bug fix — demo app crashed when its screen was torn down mid-scan
+Rotating the phone or relaunching the app during a scan destroyed the activity, whose
+`executor.shutdownNow()` interrupted the scan thread's progress `Thread.sleep` — the uncaught
+`InterruptedException` killed the process. The scan thread now stops quietly. This was also the
+cause of the intermittent "baseline timeout" in the emulator lab (first launch is relaunched).
 
 ### `DeviceSafetyGuard` — runtime protection for the live screen (new public API)
 `RootDetector.scan()` reports what is installed/enabled; the guard protects a sensitive screen

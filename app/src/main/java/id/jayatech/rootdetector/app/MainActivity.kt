@@ -97,16 +97,25 @@ class MainActivity : AppCompatActivity() {
                 "Running native JNI checks…",
                 "Compiling results…"
             )
-            steps.forEachIndexed { i, msg ->
-                mainHandler.post { statusLabel.text = msg }
-                Thread.sleep(180L + i * 40L)
+            // onDestroy() calls executor.shutdownNow(), which interrupts these sleeps when the
+            // activity is torn down mid-scan (rotation, a relaunch). An uncaught
+            // InterruptedException here killed the whole process — just stop quietly instead.
+            try {
+                steps.forEachIndexed { i, msg ->
+                    mainHandler.post { statusLabel.text = msg }
+                    Thread.sleep(180L + i * 40L)
+                }
+            } catch (_: InterruptedException) {
+                return@execute
             }
 
             // Lab mode (used by .github/workflows/lab.yml): optional delay so an injector
             // (Frida, jdb) can attach first, then the result is written as JSON.
             val labOut = intent?.getStringExtra(EXTRA_LAB_OUT)
             val labDelay = intent?.getLongExtra(EXTRA_LAB_DELAY_MS, 0L) ?: 0L
-            if (labOut != null && labDelay > 0) Thread.sleep(labDelay)
+            if (labOut != null && labDelay > 0) {
+                try { Thread.sleep(labDelay) } catch (_: InterruptedException) { return@execute }
+            }
 
             val result = try {
                 RootDetector.scan(this)
@@ -116,7 +125,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             if (labOut != null) writeLabResult(labOut, result)
-            mainHandler.post { showResult(result) }
+            mainHandler.post { if (!isFinishing && !isDestroyed) showResult(result) }
         }
 
         return root
