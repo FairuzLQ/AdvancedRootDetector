@@ -48,6 +48,10 @@ Detector/
 | `DangerousPermissionDetector` | Non-system apps with overlay/`SYSTEM_ALERT_WINDOW` (tapjacking) or SMS-read (OTP intercept). **Device-safety axis** |
 | `DeviceAdminDetector` | Non-system device admin (locker/stalkerware, resists uninstall); HIGH if device owner or a remote app. **Device-safety axis** |
 
+`DeviceSafetyGuard` (public, runtime — not part of `scan()`): overlay/tapjacking filter +
+touch classification, `FLAG_SECURE`, API 34+ screenshot callback, mirrored-display check
+(also surfaced by the scan as `screen_mirroring_active`).
+
 ## Key Design Decisions
 
 - **Never crash the host app**: `RootDetector.scan()` catches `Throwable` per detector; native

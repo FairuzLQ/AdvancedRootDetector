@@ -12,6 +12,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import id.jayatech.rootdetector.DeviceSafetyGuard
 import id.jayatech.rootdetector.RootDetector
 import id.jayatech.rootdetector.model.DetectionResult
 import id.jayatech.rootdetector.model.RiskLevel
@@ -135,6 +136,9 @@ class MainActivity : AppCompatActivity() {
         }
         scroll.addView(root)
         setContentView(scroll)
+        // Demo of the runtime guard: touches arriving while another app's overlay covers this
+        // screen are dropped (tapjacking defence).
+        DeviceSafetyGuard.protectFromOverlays(scroll)
 
         // Header
         val header = TextView(this).apply {
@@ -370,6 +374,23 @@ class MainActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_LAB_OUT = "lab_out"
         const val EXTRA_LAB_DELAY_MS = "lab_delay_ms"
+    }
+
+    private var captureRegistration: DeviceSafetyGuard.Registration? = null
+
+    override fun onStart() {
+        super.onStart()
+        captureRegistration = DeviceSafetyGuard.registerScreenCaptureListener(this) {
+            android.widget.Toast.makeText(
+                this, "Screenshot detected — never share codes shown here", android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    override fun onStop() {
+        captureRegistration?.unregister()
+        captureRegistration = null
+        super.onStop()
     }
 
     override fun onDestroy() {

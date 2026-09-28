@@ -61,6 +61,21 @@ class DeviceSafetyRulesTest {
         assertFalse(Rules.isUserCaAlias("system:1234"))
     }
 
+    @Test fun obscuredTouchClassification() {
+        assertEquals(Rules.ObscuredTouch.NONE, Rules.classifyTouchFlags(0))
+        assertEquals(Rules.ObscuredTouch.FULL, Rules.classifyTouchFlags(0x1))
+        assertEquals(Rules.ObscuredTouch.PARTIAL, Rules.classifyTouchFlags(0x2))
+        assertEquals(Rules.ObscuredTouch.FULL, Rules.classifyTouchFlags(0x3)) // full wins
+        assertEquals(Rules.ObscuredTouch.NONE, Rules.classifyTouchFlags(0x10)) // unrelated flag
+    }
+
+    @Test fun mirroringDisplayClassification() {
+        assertFalse(Rules.isMirroringDisplay(0, 8))           // default display never counts
+        assertTrue(Rules.isMirroringDisplay(2, 8))            // public presentation (Cast/HDMI)
+        assertFalse(Rules.isMirroringDisplay(3, 8 or 4))      // private virtual display
+        assertFalse(Rules.isMirroringDisplay(4, 0))           // non-presentation secondary
+    }
+
     @Test fun testInfrastructurePackagesAreExcluded() {
         // Firebase Test Lab / Espresso harness holds SYSTEM_ALERT_WINDOW but is not on a user device.
         assertTrue(Rules.isTestInfrastructurePackage("com.google.android.apps.common.testing.services"))

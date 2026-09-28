@@ -1,6 +1,7 @@
 package id.jayatech.rootdetector.detector
 
 import android.content.Context
+import id.jayatech.rootdetector.DeviceSafetyGuard
 import id.jayatech.rootdetector.model.DetectorCategory
 import id.jayatech.rootdetector.model.RiskLevel
 import id.jayatech.rootdetector.model.RootIndicator
@@ -46,6 +47,20 @@ internal class RemoteAccessDetector(context: Context, props: PropSnapshot = Prop
                     "an attacker to watch passwords and one-time codes as you type them.",
                 risk = RiskLevel.MEDIUM,
                 evidence = share
+            )
+        }
+
+        val mirroring = DeviceSafetyGuard.mirroringDisplays(context)
+        if (mirroring.isNotEmpty()) {
+            out += RootIndicator(
+                id = "screen_mirroring_active",
+                category = DetectorCategory.REMOTE_ACCESS,
+                title = "Screen Is Being Mirrored / Cast",
+                detail = "This screen is currently shown on another display (Cast, Miracast or a wired " +
+                    "mirror). Anyone watching that display sees what you type — stop casting before " +
+                    "entering passwords or codes.",
+                risk = RiskLevel.MEDIUM,
+                evidence = mirroring
             )
         }
         return out

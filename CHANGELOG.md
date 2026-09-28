@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### `DeviceSafetyGuard` — runtime protection for the live screen (new public API)
+`RootDetector.scan()` reports what is installed/enabled; the guard protects a sensitive screen
+(login, PIN, transfer confirmation, OTP) *while it is in use*:
+
+- `protectFromOverlays(view)` + `classifyTouch(event)` — tapjacking defence: touches that arrive
+  while another app's window covers yours are dropped, and can be reported (FULL / PARTIAL).
+- `secureWindow(activity)` — `FLAG_SECURE`: no screenshots, screen recording, remote-control
+  capture or casting of that window.
+- `registerScreenCaptureListener(activity) { … }` — API 34+ screenshot callback (host declares
+  the normal permission `DETECT_SCREEN_CAPTURE`; otherwise a safe no-op returning null).
+- `mirroringDisplays(context)` — public presentation displays (Cast / Miracast / HDMI mirroring).
+  The scan also reports this as `screen_mirroring_active` (REMOTE_ACCESS, MEDIUM).
+
+The demo app uses the overlay filter and the screenshot listener.
+
 ### `DeviceAdminDetector` — device-admin / device-owner abuse (device-safety axis)
 A non-system app holding device-administrator rights can lock or wipe the phone and cannot be
 uninstalled until the right is revoked — the mechanism behind screen-locker ransomware and

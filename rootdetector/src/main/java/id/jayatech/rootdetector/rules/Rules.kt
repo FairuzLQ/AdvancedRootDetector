@@ -457,4 +457,43 @@ internal object Rules {
     )
 
     fun isTestInfrastructurePackage(pkg: String): Boolean = pkg in TEST_INFRASTRUCTURE_PACKAGES
+
+    // -------------------------------------------------------------------------
+    // Runtime device-safety (DeviceSafetyGuard): tapjacking and screen mirroring.
+    // Constants mirror the Android framework values so this stays Android-free.
+    // -------------------------------------------------------------------------
+
+    /** MotionEvent.FLAG_WINDOW_IS_OBSCURED — another visible window covers the touched window. */
+    const val MOTION_FLAG_WINDOW_IS_OBSCURED = 0x1
+
+    /** MotionEvent.FLAG_WINDOW_IS_PARTIALLY_OBSCURED (API 29) — an overlay covers part of it. */
+    const val MOTION_FLAG_WINDOW_IS_PARTIALLY_OBSCURED = 0x2
+
+    enum class ObscuredTouch { NONE, PARTIAL, FULL }
+
+    /**
+     * Classify a touch by its MotionEvent flags. FULL/PARTIAL mean another app's window was on
+     * top when the user touched — the signature of tapjacking or a fake overlay over a
+     * sensitive screen (PIN, transfer confirmation).
+     */
+    fun classifyTouchFlags(flags: Int): ObscuredTouch = when {
+        flags and MOTION_FLAG_WINDOW_IS_OBSCURED != 0 -> ObscuredTouch.FULL
+        flags and MOTION_FLAG_WINDOW_IS_PARTIALLY_OBSCURED != 0 -> ObscuredTouch.PARTIAL
+        else -> ObscuredTouch.NONE
+    }
+
+    /** Display.DEFAULT_DISPLAY, Display.FLAG_PRIVATE and Display.FLAG_PRESENTATION. */
+    const val DEFAULT_DISPLAY_ID = 0
+    const val DISPLAY_FLAG_PRIVATE = 4
+    const val DISPLAY_FLAG_PRESENTATION = 8
+
+    /**
+     * True if a display looks like the screen is being mirrored/cast elsewhere: any non-default
+     * display that is a public presentation display (Cast, Miracast, HDMI/USB-C mirroring).
+     * Private virtual displays (an app's own offscreen surfaces) are ignored.
+     */
+    fun isMirroringDisplay(displayId: Int, flags: Int): Boolean =
+        displayId != DEFAULT_DISPLAY_ID &&
+            flags and DISPLAY_FLAG_PRIVATE == 0 &&
+            flags and DISPLAY_FLAG_PRESENTATION != 0
 }
