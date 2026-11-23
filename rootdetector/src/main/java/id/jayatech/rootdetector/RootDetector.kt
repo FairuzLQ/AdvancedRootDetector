@@ -63,6 +63,7 @@ object RootDetector {
             MagiskDetector(context, props),
             KernelSUDetector(context, props),
             APatchDetector(context, props),
+            ApatchKpmDetector(context, props),
             ZygiskDetector(context, props),
             XposedDetector(context, props),
             BinaryDetector(context, props),
