@@ -27,6 +27,11 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         RootDetector.loggingEnabled = true  // demo app: keep logcat export (adb logcat -s RootDetector:I)
+        // A real app pins its release signer here so a repackaged/re-signed copy is caught:
+        //   RootDetector.expectedSignaturesSha256 = setOf("<your release cert SHA-256>")
+        // The demo leaves it unset (CI signs with its own debug key), so only the debug-keystore
+        // note fires. The signature-pin path is validated in the lab: re-sign the APK with any other
+        // key and `integrity_resigned` (CRITICAL) fires.
         setContentView(buildLoadingLayout())
     }
 

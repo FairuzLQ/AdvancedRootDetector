@@ -56,6 +56,16 @@ object RootDetector {
     @JvmStatic
     var suExecutionEnabled: Boolean = false
 
+    /**
+     * Expected release signing-certificate SHA-256 hash(es), lowercase hex. Set this to your app's
+     * release signer so SelfIntegrityDetector can detect a repackaged / re-signed build: if the
+     * running app's signer is not in this set, `integrity_resigned` (CRITICAL) fires. Leave empty
+     * to skip the signature pin (the debug-keystore check still runs). Get your hash with:
+     *   `apksigner verify --print-certs app-release.apk`  (the "certificate SHA-256 digest").
+     */
+    @JvmStatic
+    var expectedSignaturesSha256: Set<String> = emptySet()
+
     fun scan(context: Context): DetectionResult {
         // One getprop snapshot shared by every detector in this scan.
         val props = PropSnapshot()
@@ -72,6 +82,7 @@ object RootDetector {
             MountDetector(context, props),
             NativeDetector(context, props),
             IntegrityDetector(context, props),
+            SelfIntegrityDetector(context, props),
             EmulatorDetector(context, props),
             DebugDetector(context, props),
             ToolingDetector(context, props),

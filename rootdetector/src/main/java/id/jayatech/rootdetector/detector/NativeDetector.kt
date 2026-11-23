@@ -50,7 +50,18 @@ internal class NativeDetector(context: Context, props: PropSnapshot = PropSnapsh
     private external fun nativeProbeKernelSU(): Boolean
 
     override fun detect(): List<RootIndicator> {
-        if (!nativeAvailable) return emptyList()
+        // A legitimate build always ships librootdetector_native.so for every Android ABI
+        // (arm64/armeabi/x86/x86_64). If it failed to load, it was stripped or replaced to disable
+        // the native checks — tampering. (An unsupported CPU ABI is the only benign cause.)
+        if (!nativeAvailable) return listOf(RootIndicator(
+            id = "native_component_missing",
+            category = DetectorCategory.INTEGRITY,
+            title = "Native Detection Component Removed",
+            detail = "The bundled native library failed to load. On a supported device this means the " +
+                "native detection component was stripped or replaced from the APK (tampering).",
+            risk = RiskLevel.HIGH,
+            evidence = listOf("System.loadLibrary(rootdetector_native) failed")
+        ))
         val rawResults = try { nativeScan() } catch (_: Exception) { emptyArray() }
         if (rawResults.isEmpty()) return emptyList()
 

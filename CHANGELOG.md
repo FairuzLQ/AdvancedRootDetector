@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.9.3] — Self-protection: anti-tamper (repackage / re-sign / library removal)
+
+Defends the detector against being patched out of the host app. Android enforces APK signatures, so
+**any** byte-level modification — patching `librootdetector_native.so` with IDA/Ghidra/radare2,
+smali edits, or deleting the native library — forces the attacker to re-sign the APK with their own
+key (they do not have your release key). Three new INTEGRITY signals catch that:
+
+- **`integrity_resigned`** (CRITICAL): the running app's signing certificate is not in the release
+  signer(s) the app pins via the new `RootDetector.expectedSignaturesSha256` API. Catches every
+  repackaged/re-signed build regardless of what was patched. Zero false positives when configured —
+  the app knows its own signer. (No pin set → skipped.)
+- **`integrity_debug_signed`** (INFO): the signing cert subject is `CN=Android Debug` — a testing or
+  casually-repackaged build. Reported as INFO so a legitimate debug build is noted, not punished.
+- **`native_component_missing`** (HIGH): the bundled `librootdetector_native.so` (shipped for every
+  Android ABI) failed to load — on a supported device this means the native detection component was
+  stripped or replaced from the APK. Catches the "just delete the library" attack directly.
+
+New `SelfIntegrityDetector` + the `RootDetector.expectedSignaturesSha256` pin API. Lab-verified on a
+clean Samsung A51: our own build matches the pin (no false positive), an attacker-re-signed APK fires
+`integrity_resigned`, and an APK with the native library removed fires `native_component_missing`.
+All on the root/tamper axis (a tampered app sets `isRooted`).
+
 ## [1.9.2] — Device-relative signer trust (OEM-app false-positive fix)
 
 ### Fix: first-party OEM apps flagged as overlay/SMS threats
