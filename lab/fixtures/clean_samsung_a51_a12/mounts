@@ -1,0 +1,8 @@
+/dev/block/dm-0 / ext4 ro,seclabel,relatime 0 0
+tmpfs /dev tmpfs rw,seclabel,nosuid,relatime,size=2828464k,nr_inodes=707116,mode=755 0 0
+proc /proc proc rw,relatime,gid=3009,hidepid=2 0 0
+/dev/block/dm-1 /vendor ext4 ro,seclabel,relatime 0 0
+/dev/block/dm-2 /product ext4 ro,seclabel,relatime 0 0
+/dev/block/dm-3 /odm ext4 ro,seclabel,relatime 0 0
+/dev/block/by-name/userdata /data f2fs rw,lazytime,seclabel,nosuid,nodev,noatime 0 0
+/dev/block/loop3 /apex/com.android.art@310000000 ext4 ro,dirsync,seclabel,nodev,noatime 0 0

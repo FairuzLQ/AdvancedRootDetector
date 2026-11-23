@@ -12,6 +12,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import id.jayatech.rootdetector.DeviceSafetyGuard
 import id.jayatech.rootdetector.RootDetector
 import id.jayatech.rootdetector.model.DetectionResult
 import id.jayatech.rootdetector.model.RiskLevel
@@ -25,6 +26,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        RootDetector.loggingEnabled = true  // demo app: keep logcat export (adb logcat -s RootDetector:I)
         setContentView(buildLoadingLayout())
     }
 
@@ -95,9 +97,24 @@ class MainActivity : AppCompatActivity() {
                 "Running native JNI checks…",
                 "Compiling results…"
             )
-            steps.forEachIndexed { i, msg ->
-                mainHandler.post { statusLabel.text = msg }
-                Thread.sleep(180L + i * 40L)
+            // onDestroy() calls executor.shutdownNow(), which interrupts these sleeps when the
+            // activity is torn down mid-scan (rotation, a relaunch). An uncaught
+            // InterruptedException here killed the whole process — just stop quietly instead.
+            try {
+                steps.forEachIndexed { i, msg ->
+                    mainHandler.post { statusLabel.text = msg }
+                    Thread.sleep(180L + i * 40L)
+                }
+            } catch (_: InterruptedException) {
+                return@execute
+            }
+
+            // Lab mode (used by .github/workflows/lab.yml): optional delay so an injector
+            // (Frida, jdb) can attach first, then the result is written as JSON.
+            val labOut = intent?.getStringExtra(EXTRA_LAB_OUT)
+            val labDelay = intent?.getLongExtra(EXTRA_LAB_DELAY_MS, 0L) ?: 0L
+            if (labOut != null && labDelay > 0) {
+                try { Thread.sleep(labDelay) } catch (_: InterruptedException) { return@execute }
             }
 
             val result = try {
@@ -107,7 +124,8 @@ class MainActivity : AppCompatActivity() {
                 return@execute
             }
 
-            mainHandler.post { showResult(result) }
+            if (labOut != null) writeLabResult(labOut, result)
+            mainHandler.post { if (!isFinishing && !isDestroyed) showResult(result) }
         }
 
         return root
@@ -127,6 +145,9 @@ class MainActivity : AppCompatActivity() {
         }
         scroll.addView(root)
         setContentView(scroll)
+        // Demo of the runtime guard: touches arriving while another app's overlay covers this
+        // screen are dropped (tapjacking defence).
+        DeviceSafetyGuard.protectFromOverlays(scroll)
 
         // Header
         val header = TextView(this).apply {
@@ -150,7 +171,8 @@ class MainActivity : AppCompatActivity() {
             RiskLevel.CRITICAL -> Color.parseColor("#B71C1C")
             RiskLevel.HIGH     -> Color.parseColor("#BF360C")
             RiskLevel.MEDIUM   -> Color.parseColor("#F57F17")
-            RiskLevel.LOW      -> Color.parseColor("#1B5E20")
+            RiskLevel.LOW,
+            RiskLevel.INFO     -> Color.parseColor("#1B5E20")
         }
         val verdictCard = cardView(root, verdictBg, padV = 28)
 
@@ -173,6 +195,25 @@ class MainActivity : AppCompatActivity() {
         }
         verdictCard.addView(scoreText)
 
+        // Device-safety axis (scam / remote control / MITM) — separate from the root verdict.
+        if (result.isDeviceAtRisk) {
+            val deviceCard = cardView(root, Color.parseColor("#4A148C"), padV = 20)
+            deviceCard.addView(TextView(this).apply {
+                text = "🛡  DEVICE-SAFETY WARNING"
+                textSize = 15f
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+            })
+            deviceCard.addView(TextView(this).apply {
+                text = "Accessibility / remote-control / MITM signals: ${result.deviceThreatScore}/100.\n" +
+                    "Not root — but review these before banking or entering codes."
+                textSize = 12f
+                setTextColor(Color.parseColor("#E1BEE7"))
+                gravity = Gravity.CENTER
+                setPadding(0, 10, 0, 0)
+            })
+        }
+
         if (result.indicators.isEmpty()) {
             val clean = TextView(this).apply {
                 text = "No root artifacts detected on this device."
@@ -192,6 +233,7 @@ class MainActivity : AppCompatActivity() {
                 indicators.any { it.risk == RiskLevel.CRITICAL } -> Color.parseColor("#EF5350")
                 indicators.any { it.risk == RiskLevel.HIGH }     -> Color.parseColor("#FF7043")
                 indicators.any { it.risk == RiskLevel.MEDIUM }   -> Color.parseColor("#FFA726")
+                indicators.all { it.risk == RiskLevel.INFO }     -> Color.parseColor("#78909C")
                 else                                              -> Color.parseColor("#66BB6A")
             }
 
@@ -248,6 +290,7 @@ class MainActivity : AppCompatActivity() {
             RiskLevel.HIGH     -> Color.parseColor("#FF7043")
             RiskLevel.MEDIUM   -> Color.parseColor("#FFCA28")
             RiskLevel.LOW      -> Color.parseColor("#66BB6A")
+            RiskLevel.INFO     -> Color.parseColor("#78909C")
         }
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -293,6 +336,70 @@ class MainActivity : AppCompatActivity() {
         }
         parent.addView(card)
         return card
+    }
+
+    private fun writeLabResult(fileName: String, result: DetectionResult) {
+        val json = org.json.JSONObject().apply {
+            put("isRooted", result.isRooted)
+            put("riskScore", result.riskScore)
+            put("isDeviceAtRisk", result.isDeviceAtRisk)
+            put("deviceThreatScore", result.deviceThreatScore)
+            put("sdk", android.os.Build.VERSION.SDK_INT)
+            put("timingsMs", org.json.JSONObject(result.timingsMs))
+            put("indicators", org.json.JSONArray().apply {
+                result.indicators.forEach { ind ->
+                    put(org.json.JSONObject().apply {
+                        put("id", ind.id)
+                        put("category", ind.category.name)
+                        put("risk", ind.risk.name)
+                        put("title", ind.title)
+                        put("evidence", org.json.JSONArray(ind.evidence.take(6)))
+                    })
+                }
+            })
+        }
+        // Raw in-process traces, so a missed injection can be turned into a new rule.
+        json.put("diag", org.json.JSONObject().apply {
+            put("threads", org.json.JSONArray(runCatching {
+                java.io.File("/proc/self/task").listFiles().orEmpty()
+                    .mapNotNull { runCatching { java.io.File(it, "comm").readText().trim() }.getOrNull() }
+                    .distinct().sorted()
+            }.getOrDefault(emptyList())))
+            put("maps", org.json.JSONArray(runCatching {
+                java.io.File("/proc/self/maps").readLines()
+                    .filter { "memfd:" in it || "(deleted)" in it || "/data/local/tmp" in it }
+                    .map { it.substringAfterLast("  ").trim() }.distinct().take(40)
+            }.getOrDefault(emptyList())))
+        })
+        // filesDir only accepts a plain name — no path traversal from the intent extra.
+        // Written to a temp file and renamed, so the lab never reads a half-written result.
+        val out = java.io.File(filesDir, java.io.File(fileName).name)
+        val tmp = java.io.File(filesDir, out.name + ".tmp")
+        tmp.writeText(json.toString(2))
+        tmp.renameTo(out)
+        android.util.Log.i("RDLAB", "RDLAB_DONE ${result.indicators.size}")
+    }
+
+    companion object {
+        const val EXTRA_LAB_OUT = "lab_out"
+        const val EXTRA_LAB_DELAY_MS = "lab_delay_ms"
+    }
+
+    private var captureRegistration: DeviceSafetyGuard.Registration? = null
+
+    override fun onStart() {
+        super.onStart()
+        captureRegistration = DeviceSafetyGuard.registerScreenCaptureListener(this) {
+            android.widget.Toast.makeText(
+                this, "Screenshot detected — never share codes shown here", android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    override fun onStop() {
+        captureRegistration?.unregister()
+        captureRegistration = null
+        super.onStop()
     }
 
     override fun onDestroy() {

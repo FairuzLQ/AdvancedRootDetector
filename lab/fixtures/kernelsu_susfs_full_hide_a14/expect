@@ -1,0 +1,3 @@
+clean
+gap SUSFS spoofs /proc/version, umounts module mounts and resets props — no text-level artifact remains
+gap Remaining avenues: Key Attestation with Google root-cert chain validation (TrickyStore can still spoof with a leaked keybox), timing side-channels on the KSU hook, server-side Play Integrity verdict

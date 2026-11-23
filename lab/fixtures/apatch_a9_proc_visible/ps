@@ -1,0 +1,4 @@
+USER           PID  PPID     VSZ    RSS WCHAN            ADDR S NAME
+root             1     0   22540   2172 SyS_epoll_wait      0 S init
+root           812     1   12880   3120 SyS_epoll_wait      0 S apd
+system         901     1   40220   6120 SyS_epoll_wait      0 S vendor.qti.hardware.snap_apd@1.0-service

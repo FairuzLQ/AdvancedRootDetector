@@ -5,8 +5,9 @@ import android.os.Build
 import id.jayatech.rootdetector.model.DetectorCategory
 import id.jayatech.rootdetector.model.RiskLevel
 import id.jayatech.rootdetector.model.RootIndicator
+import id.jayatech.rootdetector.rules.Rules
 
-internal class PropsDetector(context: Context) : BaseDetector(context) {
+internal class PropsDetector(context: Context, props: PropSnapshot = PropSnapshot()) : BaseDetector(context, props) {
 
     override fun detect(): List<RootIndicator> {
         val findings = mutableListOf<RootIndicator>()
@@ -91,35 +92,39 @@ internal class PropsDetector(context: Context) : BaseDetector(context) {
      * or on devices where the kernel was patched to disable it.
      */
     private fun detectSeLinux(): RootIndicator? {
-        val evidence = mutableListOf<String>()
-        try {
-            val enforce = java.io.File("/sys/fs/selinux/enforce").readText().trim()
-            if (enforce == "0") evidence += "SELinux enforce=0 (permissive)"
-        } catch (_: Exception) {}
-
+        val enforce = try {
+            java.io.File("/sys/fs/selinux/enforce").readText().trim()
+        } catch (_: Exception) { "" }
         val bootSelinux = readProp("ro.boot.selinux")
-        if (bootSelinux == "permissive") evidence += "ro.boot.selinux=permissive"
 
-        return if (evidence.isNotEmpty()) RootIndicator(
-            id = "props_selinux",
-            category = DetectorCategory.PROPS,
-            title = "SELinux Not Enforcing",
-            detail = "SELinux is permissive — root exploits run unrestricted. Not seen on any stock ROM.",
-            risk = RiskLevel.CRITICAL,
-            evidence = evidence
-        ) else null
+        // The kernel's live state is the proof. The boot parameter alone is not: Samsung user
+        // builds keep enforcing with androidboot.selinux=permissive (seen on a stock SC-51C in
+        // Firebase Test Lab), so that case is reported as context only.
+        val verdict = Rules.selinuxVerdict(enforce, bootSelinux)
+        if (verdict == Rules.SelinuxVerdict.PERMISSIVE) {
+            return RootIndicator(
+                id = "props_selinux",
+                category = DetectorCategory.PROPS,
+                title = "SELinux Not Enforcing",
+                detail = "Kernel reports SELinux permissive — root exploits run unrestricted. Not seen on any stock ROM.",
+                risk = RiskLevel.CRITICAL,
+                evidence = listOfNotNull("SELinux enforce=0 (permissive)",
+                    bootSelinux.takeIf { it == "permissive" }?.let { "ro.boot.selinux=$it" })
+            )
+        }
+        if (verdict == Rules.SelinuxVerdict.BOOT_PARAM_ONLY) {
+            return RootIndicator(
+                id = "props_selinux_boot_param",
+                category = DetectorCategory.PROPS,
+                title = "SELinux Permissive Boot Parameter",
+                detail = "Bootloader passed selinux=permissive; the kernel may still enforce (stock Samsung does)",
+                risk = RiskLevel.INFO,
+                evidence = listOf("ro.boot.selinux=permissive", "enforce=" + enforce.ifEmpty { "unreadable" })
+            )
+        }
+        return null
     }
 
-    /**
-     * Bootloader state detection.
-     *
-     * FALSE POSITIVE notes:
-     *  - "yellow" = custom key, seen on some OEM devices with special signing (not root).
-     *  - "orange" = unlocked bootloader. Many developers unlock legally without root.
-     *  - Unlocked bootloader ≠ rooted, but is a prerequisite for most root methods.
-     *  - Risk: MEDIUM (bootloader unlocked is suspicious context, not proof).
-     *  - "green" = fully locked and verified — safe.
-     */
     /**
      * Magisk/Kitsune/KSU set runtime props during init scripts.
      * DenyList only isolates mount namespaces — it does NOT clean system props.
@@ -137,17 +142,12 @@ internal class PropsDetector(context: Context) : BaseDetector(context) {
         )
         val evidence = mutableListOf<String>()
 
-        // One subprocess dumps all props — parse directly instead of N getprop calls.
-        // getprop piped to grep is fast; 3 s timeout is generous for old devices.
-        // IMPORTANT: avoid short patterns like "ksu" — they match substrings in unrelated props
-        // (e.g. "ro.boot.emmc_checksum" contains "ksu"). Use "kernelsu" or full prop names instead.
-        val grepOut = runShellCommand(
-            "getprop | grep -iE 'magisk|zygisk|kitsune|apatch|kernelsu|supersu'",
-            timeoutMs = 3000
-        )
-        grepOut.lines().filter { it.isNotBlank() }.take(8).forEach { evidence += it.trim() }
+        // The per-scan getprop snapshot (one subprocess) is matched in-process — no extra
+        // `getprop | grep` fork. Short patterns like "ksu" are deliberately NOT used: they
+        // match unrelated props (e.g. "ro.boot.emmc_checksum" contains "ksu").
+        Rules.rootRuntimeProps(props.asMap()).take(8).forEach { evidence += it }
 
-        // Also check specific keys in case grep fails or prop has unusual format
+        // Also check specific keys in case the snapshot missed them
         for (key in directProps) {
             val v = readProp(key)
             if (v.isNotEmpty() && !evidence.any { it.contains(key) }) evidence += "$key=$v"
@@ -163,6 +163,16 @@ internal class PropsDetector(context: Context) : BaseDetector(context) {
         ) else null
     }
 
+    /**
+     * Bootloader state detection.
+     *
+     * FALSE POSITIVE notes:
+     *  - "yellow" = custom key, seen on some OEM devices with special signing (not root).
+     *  - "orange" = unlocked bootloader. Many developers unlock legally without root.
+     *  - Unlocked bootloader ≠ rooted, but is a prerequisite for most root methods.
+     *  - Risk: MEDIUM (bootloader unlocked is suspicious context, not proof).
+     *  - "green" = fully locked and verified — safe.
+     */
     private fun detectBootloaderState(): RootIndicator? {
         val evidence = mutableListOf<String>()
         var risk = RiskLevel.LOW

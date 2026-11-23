@@ -1,0 +1,2 @@
+App repackaged with frida-gadget in its own lib dir (objection patchapk). The native MAPS scan
+skips /data/app on purpose, so DebugDetector must catch it via maps + thread names.

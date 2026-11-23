@@ -1,0 +1,4 @@
+must native:frida_port
+mustnot fs_root_executables_tmp
+gap Renamed binary is invisible to name-based file rules (only the 20MB+ ELF heuristic in BinaryDetector may catch it on-device)
+gap Started with -l 0.0.0.0:31337 the port rule is blind too; only in-process artefacts (threads/maps) remain once it attaches

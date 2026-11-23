@@ -1,0 +1,4 @@
+Magisk 28 on a modern Android 14 device (2SI, /debug_ramdisk), Zygisk + DenyList enforced
+for this app, no Shamiko. DenyList unmounts everything Magisk from our namespace; /proc is
+mounted hidepid=2 so other processes are invisible; /proc/1/mounts is not readable.
+This fixture documents what text rules CANNOT see — expect gaps.

@@ -1,0 +1,3 @@
+must xposed_maps
+must zygisk_maps
+must native:maps

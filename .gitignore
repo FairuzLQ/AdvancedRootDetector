@@ -37,3 +37,7 @@ release/
 # NDK CMake cache
 **/.cxx/
 **/cmake-build-*/
+
+# Python
+__pycache__/
+*.pyc

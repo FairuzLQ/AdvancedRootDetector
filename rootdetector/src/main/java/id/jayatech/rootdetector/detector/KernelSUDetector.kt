@@ -4,8 +4,9 @@ import android.content.Context
 import id.jayatech.rootdetector.model.DetectorCategory
 import id.jayatech.rootdetector.model.RiskLevel
 import id.jayatech.rootdetector.model.RootIndicator
+import id.jayatech.rootdetector.rules.Rules
 
-internal class KernelSUDetector(context: Context) : BaseDetector(context) {
+internal class KernelSUDetector(context: Context, props: PropSnapshot = PropSnapshot()) : BaseDetector(context, props) {
 
     private val ksuPackages = listOf(
         "me.weishu.kernelsu",           // KernelSU official manager
@@ -14,9 +15,9 @@ internal class KernelSUDetector(context: Context) : BaseDetector(context) {
         "me.weishu.kernelsu.debug",
         "io.github.tiann.kernelsu",
         "com.nextsu.manager",
-        "com.canyie.dreamland.manager", // sometimes paired with KSU
-        "top.canyie.pine.xposed",
-        "me.bmax.apatch",               // APatch (often confused with KSU)
+        "com.sukisu.ultra",             // SukiSU Ultra (KSU fork)
+        // Dreamland / Pine / APatch are reported by XposedDetector / APatchDetector —
+        // listing them here double-counted the score under the wrong category.
     )
 
     private val ksuPaths = listOf(
@@ -116,11 +117,9 @@ internal class KernelSUDetector(context: Context) : BaseDetector(context) {
         val evidence = mutableListOf<String>()
         try {
             val version = java.io.File("/proc/version").readText()
-            // KernelSU patches often add "KernelSU" or "ksu" to kernel version string
-            if (version.contains("KernelSU", ignoreCase = true) ||
-                version.contains("ksu", ignoreCase = true) ||
-                version.contains("ksunext", ignoreCase = true)
-            ) {
+            // KernelSU patches often add "KernelSU" or "-ksu" to kernel version string.
+            // "ksu" is matched as a whole token only ("checksum" must not match).
+            if (Rules.kernelSuInVersion(version)) {
                 evidence += version.take(200)
             }
         } catch (_: Exception) {}

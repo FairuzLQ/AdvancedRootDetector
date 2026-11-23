@@ -1,0 +1,1 @@
+Native debugger (lldb-server / gdbserver / strace) attached to the app via ptrace.

@@ -1,0 +1,2 @@
+7a55000000-7a55200000 r--p 00000000 00:00 0 [anon:dalvik-classes.dex extracted in memory from /data/adb/lspd/framework/lspd.dex]
+7a56000000-7a56040000 r-xp 00000000 fd:30 9911 /data/adb/modules/zygisk_lsposed/zygisk/arm64-v8a.so

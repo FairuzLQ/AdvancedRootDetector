@@ -1,0 +1,4 @@
+REAL capture (Firebase Test Lab, 2026-09-25): stock Samsung SC-51C, Android 16, user/release-keys.
+The bootloader passes androidboot.selinux=permissive, but the kernel keeps enforcing (Samsung
+user builds). v1.6.0 flagged this CRITICAL "SELinux Not Enforcing" — a false positive.
+/sys/fs/selinux/enforce is not readable by untrusted apps here (empty selinux_enforce).

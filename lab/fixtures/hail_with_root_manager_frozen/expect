@@ -1,0 +1,3 @@
+must tooling_privileged_apps
+must magisk_proc_ps
+must magisk_pkg_shell

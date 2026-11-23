@@ -1,0 +1,84 @@
+{
+  "_doc": "must = indicator ids that have to fire on the emulator; mustnot = must not fire. Checked by check.py.",
+  "baseline": {
+    "must": [
+      "emulator_build_props"
+    ],
+    "mustnot": [
+      "debug_frida_threads",
+      "debug_frida_maps",
+      "debug_jdwp",
+      "native_frida_port",
+      "native_inline_hook"
+    ]
+  },
+  "frida_server": {
+    "must": [],
+    "mustnot": [
+      "debug_frida_threads",
+      "debug_frida_maps"
+    ],
+    "note": "frida-server only (renamed fs64, not attached). /proc/net/tcp is SELinux-blocked for apps on Android 10+, so FRIDA_PORT is expected to be blind on API 30+."
+  },
+  "frida_attach": {
+    "must": [
+      "debug_frida_threads",
+      "debug_frida_maps"
+    ],
+    "mustnot": [
+      "debug_jdwp"
+    ],
+    "note": "Real Frida 17 agent injected by frida-server into the app process (memfd:frida-agent-64.so, gum-js-loop/gmain/gdbus threads)."
+  },
+  "jdwp_debugger": {
+    "must": [
+      "debug_jdwp"
+    ],
+    "mustnot": [
+      "debug_frida_threads",
+      "debug_frida_maps",
+      "native_inline_hook"
+    ]
+  },
+  "magisk": {
+    "must": [
+      "magisk_pkg",
+      "magisk_bins",
+      "mount_magisk_tmpfs",
+      "mount_module_bind",
+      "native_su_bin",
+      "binary_su"
+    ],
+    "mustnot": [],
+    "note": "Magisk (rootAVD) default config: Zygisk off, DenyList off. Must catch Magisk across the Java (pkg/bins), mount (tmpfs + module bind) and native-syscall (su via SYS_newfstatat) layers."
+  },
+  "frida_hook": {
+    "must": [
+      "debug_frida_threads",
+      "native_inline_hook"
+    ],
+    "mustnot": [],
+    "note": "Frida agent attached AND an Interceptor hook placed on libc open() \u2014 the inline-hook check must see the patched prologue."
+  },
+  "magisk_zygisk": {
+    "must": [
+      "magisk_pkg",
+      "magisk_bins",
+      "mount_magisk_tmpfs",
+      "mount_module_bind",
+      "native_su_bin",
+      "binary_su"
+    ],
+    "mustnot": [],
+    "note": "Magisk with Zygisk enabled, app NOT on the DenyList. NOTE: on the google_apis x86_64 (arm64-translation) image Zygisk does not load (native-bridge conflict), so this currently equals plain Magisk \u2014 runtime hiding is NOT exercised yet; the AOSP 'default' image is where Zygisk activates."
+  },
+  "magisk_zygisk_denylist": {
+    "must": [
+      "magisk_bins",
+      "mount_module_bind",
+      "native_su_bin"
+    ],
+    "mustnot": [],
+    "note": "Magisk + Zygisk + DenyList enforced for this app \u2014 what survives Magisk's own hiding. The DenyList unmounts Magisk's own bind-mounts in the app's namespace and hides the app from the manager, but it cannot hide the su binary from a raw SYS_newfstatat syscall (native_su_bin) or the module bind-mounts left in mountinfo (mount_module_bind); those are the must-fire proof that hidden Magisk is still caught. NOTE: on the google_apis x86_64 (arm64-translation) image Zygisk does not load (native-bridge conflict), so DenyList is not truly active here \u2014 full hiding is exercised only on an image where Zygisk loads (AOSP 'default') or on a real device."
+  }
+}

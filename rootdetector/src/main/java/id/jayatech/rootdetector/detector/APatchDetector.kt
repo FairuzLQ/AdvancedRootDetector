@@ -4,13 +4,14 @@ import android.content.Context
 import id.jayatech.rootdetector.model.DetectorCategory
 import id.jayatech.rootdetector.model.RiskLevel
 import id.jayatech.rootdetector.model.RootIndicator
+import id.jayatech.rootdetector.rules.Rules
 
 /**
  * Detects APatch — a kernel-level root solution similar to KernelSU.
  * APatch uses Kernel Patch Modules (KPM) instead of LKM.
  * GitHub: bmax121/APatch
  */
-internal class APatchDetector(context: Context) : BaseDetector(context) {
+internal class APatchDetector(context: Context, props: PropSnapshot = PropSnapshot()) : BaseDetector(context, props) {
 
     private val apatchPackages = listOf(
         "me.bmax.apatch",               // APatch manager (official)
@@ -30,6 +31,7 @@ internal class APatchDetector(context: Context) : BaseDetector(context) {
         "/data/adb/ap/bin/apd",         // APatch daemon
         "/data/adb/ap/bin/kpatch",      // kernel patcher
         "/data/adb/ap/bin/resetprop",
+        "/data/adb/apd",                // APatch daemon (newer releases)
         // APatch kernel module artifacts
         "/dev/apatch",
         "/dev/kp",
@@ -118,18 +120,10 @@ internal class APatchDetector(context: Context) : BaseDetector(context) {
     }
 
     private fun detectApatchSocket(): RootIndicator? {
-        val evidence = mutableListOf<String>()
-        try {
-            val lines = java.io.File("/proc/net/unix").readLines()
-            for (line in lines) {
-                if (line.contains("apatch", ignoreCase = true) ||
-                    line.contains("apd", ignoreCase = true) ||
-                    line.contains("kpatch", ignoreCase = true)
-                ) {
-                    evidence += line.trim()
-                }
-            }
-        } catch (_: Exception) {}
+        // "apd" is matched as a whole token only — as a substring it hits unrelated sockets.
+        val evidence = try {
+            Rules.apatchSocketLines(java.io.File("/proc/net/unix").readLines())
+        } catch (_: Exception) { emptyList() }
         return if (evidence.isNotEmpty()) RootIndicator(
             id = "apatch_socket",
             category = DetectorCategory.APATCH,
@@ -144,9 +138,7 @@ internal class APatchDetector(context: Context) : BaseDetector(context) {
         val evidence = mutableListOf<String>()
         try {
             val version = java.io.File("/proc/version").readText()
-            if (version.contains("APatch", ignoreCase = true) ||
-                version.contains("apatch", ignoreCase = true)
-            ) {
+            if (Rules.apatchInVersion(version)) {
                 evidence += version.take(200)
             }
         } catch (_: Exception) {}

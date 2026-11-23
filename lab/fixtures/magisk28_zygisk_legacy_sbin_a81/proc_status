@@ -1,0 +1,9 @@
+Name:	init
+Pid:	1
+PPid:	0
+Uid:	0	0	0	0
+----
+Name:	magiskd
+Pid:	612
+PPid:	1
+Uid:	0	0	0	0

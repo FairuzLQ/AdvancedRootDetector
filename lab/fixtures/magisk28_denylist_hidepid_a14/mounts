@@ -1,0 +1,3 @@
+/dev/block/dm-6 / ext4 ro,seclabel,relatime 0 0
+/dev/block/dm-7 /vendor ext4 ro,seclabel,relatime 0 0
+/dev/block/dm-50 /data f2fs rw,lazytime,seclabel,nosuid,nodev,noatime 0 0

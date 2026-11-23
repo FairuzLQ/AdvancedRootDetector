@@ -1,0 +1,3 @@
+REAL capture (Firebase Test Lab, 2026-09-25): stock Google Pixel 11, Android 17,
+user/release-keys, NOT rooted — but the farm phone's bootloader is unlocked (hardware Key
+Attestation: deviceLocked=false). Unlocked is reported (MEDIUM) but is not root.

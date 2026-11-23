@@ -36,7 +36,7 @@ import java.security.spec.ECGenParameterSpec
  * the chain will usually be self-signed (not rooted to Google PKI), which we
  * could detect by verifying the root certificate — not implemented here.
  */
-internal class IntegrityDetector(context: Context) : BaseDetector(context) {
+internal class IntegrityDetector(context: Context, props: PropSnapshot = PropSnapshot()) : BaseDetector(context, props) {
 
     companion object {
         private const val KEY_ALIAS = "rd_attest_v1"
@@ -72,10 +72,11 @@ internal class IntegrityDetector(context: Context) : BaseDetector(context) {
                 findings += RootIndicator(
                     id       = "integrity_key_attest",
                     category = DetectorCategory.INTEGRITY,
-                    title    = "Hardware Attestation: Boot Integrity Compromised",
-                    detail   = "TEE Key Attestation ($secStr) directly confirms bootloader is unlocked — " +
-                                "this runs in secure hardware, unreachable by Magisk DenyList or any userspace hook",
-                    risk     = RiskLevel.HIGH,
+                    title    = "Hardware Attestation: Bootloader Unlocked",
+                    detail   = "TEE Key Attestation ($secStr) confirms the bootloader is unlocked — reliable " +
+                                "(secure hardware), but an unlocked bootloader alone is not root. MEDIUM like " +
+                                "props_bootloader; seen on stock, unrooted Test Lab phones (Pixel)",
+                    risk     = RiskLevel.MEDIUM,
                     evidence = listOf(
                         "Attestation source: $secStr",
                         "deviceLocked: ${attest.info.deviceLocked}",
@@ -135,14 +136,15 @@ internal class IntegrityDetector(context: Context) : BaseDetector(context) {
                 findings += RootIndicator(
                     id       = "integrity_attest_blocked",
                     category = DetectorCategory.INTEGRITY,
-                    title    = "Key Attestation Blocked by Module",
-                    detail   = "Key Attestation call threw an exception while bootloader prop shows orange — " +
-                                "a bypass module is actively blocking attestation to hide bootloader state",
-                    risk     = RiskLevel.HIGH,
+                    title    = "Key Attestation Generation Failed",
+                    detail   = "Key Attestation threw while the bootloader is unlocked. A bypass module can cause " +
+                                "this, but so can genuine unlocked devices (seen on a stock Nothing Phone in " +
+                                "Firebase Test Lab) — context only",
+                    risk     = RiskLevel.INFO,
                     evidence = listOf(
                         "ro.boot.verifiedbootstate=orange (unlocked)",
                         "KeyPair generation with setAttestationChallenge: FAILED (exception)",
-                        "Real hardware never fails this call without a bypass module interfering"
+                        "Also observed on stock unlocked hardware — not proof of a bypass"
                     )
                 )
             }
@@ -203,8 +205,10 @@ internal class IntegrityDetector(context: Context) : BaseDetector(context) {
             runCatching {
                 KeyStore.getInstance("AndroidKeyStore").also { it.load(null) }.deleteEntry(KEY_ALIAS)
             }
-            // If cert generation itself threw → bypass blocked us
-            if (!certGenerated) AttestResult.GenFailed else AttestResult.ExtStripped
+            // If cert generation itself threw → bypass blocked us.
+            // An exception after the cert was obtained comes from our own ASN.1 parsing —
+            // that is a parse failure, NOT proof that a bypass stripped the extension.
+            if (!certGenerated) AttestResult.GenFailed else AttestResult.ParseFailed
         }
     }
 
@@ -349,19 +353,24 @@ internal class IntegrityDetector(context: Context) : BaseDetector(context) {
 
     // --- DER primitives ---
 
+    // Malformed input (indefinite length, >4 length bytes, truncation, overflow) returns
+    // (0, b.size): callers then stop at the end of the buffer instead of computing a
+    // negative length that could move the scan position backwards and loop forever.
     private fun derLen(b: ByteArray, offset: Int): Pair<Int, Int> {
-        if (offset >= b.size) return Pair(0, offset)
+        if (offset >= b.size) return Pair(0, b.size)
         val first = b[offset].toInt() and 0xFF
         return if (first < 0x80) {
             Pair(first, offset + 1)
         } else {
             val n = first and 0x7F
-            var len = 0
+            if (n == 0 || n > 4) return Pair(0, b.size)
+            var len = 0L
             for (i in 1..n) {
-                if (offset + i >= b.size) return Pair(0, offset)
-                len = (len shl 8) or (b[offset + i].toInt() and 0xFF)
+                if (offset + i >= b.size) return Pair(0, b.size)
+                len = (len shl 8) or (b[offset + i].toLong() and 0xFF)
             }
-            Pair(len, offset + 1 + n)
+            if (len > Int.MAX_VALUE) return Pair(0, b.size)
+            Pair(len.toInt(), offset + 1 + n)
         }
     }
 

@@ -1,0 +1,3 @@
+Magisk 28.1 on Redmi 5 (Android 8.1, legacy non-SAR, /sbin tmpfs), Zygisk enabled,
+app NOT on DenyList. Mount lines are the ones confirmed on-device in MountDetector's KDoc.
+Android 8 has no hidepid for untrusted_app, so ps/comm/exe/status are visible.

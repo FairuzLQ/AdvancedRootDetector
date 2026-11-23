@@ -4,6 +4,8 @@
 
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
+    <!-- API 34+: lets DeviceSafetyGuard report screenshots of the app (normal permission). -->
+    <uses-permission android:name="android.permission.DETECT_SCREEN_CAPTURE" />
 
     <application
         android:allowBackup="false"

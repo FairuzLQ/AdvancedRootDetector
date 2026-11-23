@@ -4,12 +4,13 @@ import android.content.Context
 import id.jayatech.rootdetector.model.DetectorCategory
 import id.jayatech.rootdetector.model.RiskLevel
 import id.jayatech.rootdetector.model.RootIndicator
+import id.jayatech.rootdetector.rules.Rules
 
-internal class MountDetector(context: Context) : BaseDetector(context) {
+internal class MountDetector(context: Context, props: PropSnapshot = PropSnapshot()) : BaseDetector(context, props) {
 
     override fun detect(): List<RootIndicator> {
         val findings = mutableListOf<RootIndicator>()
-        val mountLines = readMounts()
+        val mountLines = Rules.parseMounts(readMounts())
 
         detectRootOverlayOnSystem(mountLines)?.let { findings += it }
         detectRwSystem(mountLines)?.let { findings += it }
@@ -17,6 +18,7 @@ internal class MountDetector(context: Context) : BaseDetector(context) {
         detectMagiskTmpfs(mountLines)?.let { findings += it }
         detectZygiskMount(mountLines)?.let { findings += it }
         detectKsuMounts(mountLines)?.let { findings += it }
+        detectModuleBindMounts()?.let { findings += it }
         detectDenyListActive()?.let { findings += it }
         detectMountNamespaceIsolation()?.let { findings += it }
 
@@ -39,27 +41,8 @@ internal class MountDetector(context: Context) : BaseDetector(context) {
      *  - We only flag if the overlay lowerdir references /data/adb, which is exclusive to
      *    Magisk/KSU module injection.
      */
-    private fun detectRootOverlayOnSystem(mounts: List<String>): RootIndicator? {
-        val evidence = mutableListOf<String>()
-        val targetPaths = listOf("/system", "/vendor", "/product", "/odm")
-
-        for (line in mounts) {
-            val parts = line.split(" ")
-            if (parts.size < 4) continue
-            val fsType = parts.getOrNull(2) ?: continue
-            val mountPoint = parts.getOrNull(1) ?: continue
-            val options = parts.getOrNull(3) ?: ""
-
-            if (fsType != "overlay" && fsType != "overlayfs") continue
-            // Skip /apex — stock Android always uses overlayfs here
-            if (mountPoint.startsWith("/apex")) continue
-            if (!targetPaths.any { mountPoint == it || mountPoint.startsWith("$it/") }) continue
-
-            // Only flag if lowerdir points to root-tool directories
-            if (options.contains("/data/adb") || options.contains("magisk") || options.contains("ksu")) {
-                evidence += line.trim()
-            }
-        }
+    private fun detectRootOverlayOnSystem(mounts: List<Rules.MountEntry>): RootIndicator? {
+        val evidence = Rules.rootOverlayOnSystem(mounts)
         return if (evidence.isNotEmpty()) RootIndicator(
             id = "mount_overlay_system",
             category = DetectorCategory.MOUNT,
@@ -70,32 +53,20 @@ internal class MountDetector(context: Context) : BaseDetector(context) {
         ) else null
     }
 
-    private fun detectRwSystem(mounts: List<String>): RootIndicator? {
-        val evidence = mutableListOf<String>()
-        for (line in mounts) {
-            val parts = line.split(" ")
-            if (parts.size < 4) continue
-            val mountPoint = parts[1]
-            val options = parts[3].split(",")
-            if (mountPoint == "/system" && options.contains("rw")) {
-                evidence += line.trim()
-            }
-        }
+    private fun detectRwSystem(mounts: List<Rules.MountEntry>): RootIndicator? {
+        val evidence = Rules.rwSystem(mounts)
         return if (evidence.isNotEmpty()) RootIndicator(
             id = "mount_rw_system",
             category = DetectorCategory.MOUNT,
             title = "/system Mounted Read-Write",
-            detail = "/system partition mounted rw — indicates root-level modification",
+            detail = "/system (or system-as-root \"/\") mounted rw — indicates root-level modification",
             risk = RiskLevel.CRITICAL,
             evidence = evidence
         ) else null
     }
 
-    private fun detectDataAdb(mounts: List<String>): RootIndicator? {
-        val evidence = mutableListOf<String>()
-        for (line in mounts) {
-            if (line.contains("/data/adb")) evidence += line.trim()
-        }
+    private fun detectDataAdb(mounts: List<Rules.MountEntry>): RootIndicator? {
+        val evidence = Rules.dataAdbMounts(mounts)
         return if (evidence.isNotEmpty()) RootIndicator(
             id = "mount_data_adb",
             category = DetectorCategory.MOUNT,
@@ -106,24 +77,8 @@ internal class MountDetector(context: Context) : BaseDetector(context) {
         ) else null
     }
 
-    private fun detectMagiskTmpfs(mounts: List<String>): RootIndicator? {
-        val evidence = mutableListOf<String>()
-        for (line in mounts) {
-            val parts = line.split(" ")
-            if (parts.size < 3) continue
-            val device     = parts[0]
-            val mountPoint = parts[1]
-            val fsType     = parts[2]
-            // Match by device name "magisk" (e.g. "magisk /sbin tmpfs") OR by mount-point keyword
-            val deviceIsMagisk = device.equals("magisk", ignoreCase = true)
-            val pathIsMagisk   = mountPoint.contains("magisk", ignoreCase = true) ||
-                                 mountPoint == "/.magisk" ||
-                                 mountPoint.contains(".core")
-            if (fsType == "tmpfs" && (deviceIsMagisk || pathIsMagisk) &&
-                !mountPoint.contains("libzygisk")) {  // libzygisk handled by detectZygiskMount
-                evidence += line.trim()
-            }
-        }
+    private fun detectMagiskTmpfs(mounts: List<Rules.MountEntry>): RootIndicator? {
+        val evidence = Rules.magiskTmpfs(mounts)
         return if (evidence.isNotEmpty()) RootIndicator(
             id = "mount_magisk_tmpfs",
             category = DetectorCategory.MOUNT,
@@ -147,18 +102,8 @@ internal class MountDetector(context: Context) : BaseDetector(context) {
      *   magisk /system/lib64/libzygisk.so tmpfs ro,seclabel,relatime,...
      *   magisk /system/lib/libzygisk.so  tmpfs ro,seclabel,relatime,...
      */
-    private fun detectZygiskMount(mounts: List<String>): RootIndicator? {
-        val evidence = mutableListOf<String>()
-        for (line in mounts) {
-            val parts = line.split(" ")
-            if (parts.size < 3) continue
-            val device     = parts[0]
-            val mountPoint = parts[1]
-            if (device.equals("magisk", ignoreCase = true) &&
-                mountPoint.contains("libzygisk", ignoreCase = true)) {
-                evidence += line.trim()
-            }
-        }
+    private fun detectZygiskMount(mounts: List<Rules.MountEntry>): RootIndicator? {
+        val evidence = Rules.zygiskLibMount(mounts)
         return if (evidence.isNotEmpty()) RootIndicator(
             id = "mount_zygisk_lib",
             category = DetectorCategory.ZYGISK,
@@ -169,16 +114,8 @@ internal class MountDetector(context: Context) : BaseDetector(context) {
         ) else null
     }
 
-    private fun detectKsuMounts(mounts: List<String>): RootIndicator? {
-        val evidence = mutableListOf<String>()
-        for (line in mounts) {
-            if (line.contains("/data/adb/ksu") ||
-                line.contains("/data/adb/ksunext") ||
-                line.contains("/data/adb/ap/")
-            ) {
-                evidence += line.trim()
-            }
-        }
+    private fun detectKsuMounts(mounts: List<Rules.MountEntry>): RootIndicator? {
+        val evidence = Rules.ksuApMounts(mounts)
         return if (evidence.isNotEmpty()) RootIndicator(
             id = "mount_ksu_ap",
             category = DetectorCategory.MOUNT,
@@ -186,6 +123,25 @@ internal class MountDetector(context: Context) : BaseDetector(context) {
             detail = "KernelSU or APatch module directories are mounted",
             risk = RiskLevel.HIGH,
             evidence = evidence
+        ) else null
+    }
+
+    /**
+     * Magic-mount module files bind-mounted onto /system — visible only in mountinfo's
+     * "root" column (see Rules.mountinfoRootBinds). DenyList removes these for denied apps,
+     * so this mainly catches apps that are not on the DenyList / KSU umount list.
+     */
+    private fun detectModuleBindMounts(): RootIndicator? {
+        val evidence = try {
+            Rules.mountinfoRootBinds(java.io.File("/proc/self/mountinfo").readLines())
+        } catch (_: Exception) { emptyList() }
+        return if (evidence.isNotEmpty()) RootIndicator(
+            id = "mount_module_bind",
+            category = DetectorCategory.MOUNT,
+            title = "Root Module Bind-Mounts",
+            detail = "Files from /data/adb/modules are bind-mounted over system partitions (magic mount)",
+            risk = RiskLevel.CRITICAL,
+            evidence = evidence.take(6)
         ) else null
     }
 
@@ -209,19 +165,7 @@ internal class MountDetector(context: Context) : BaseDetector(context) {
             java.io.File("/proc/self/mounts").readText()
         } catch (_: Exception) { return null }
 
-        val rootMountMarkers = listOf(
-            "/data/adb/magisk",
-            "/data/adb/ksu",
-            "/data/adb/ksunext",
-            "/data/adb/ap",
-            "/data/adb/modules",
-            "/.magisk",
-            "/sbin/.core"
-        )
-
-        val hiddenFromUs = rootMountMarkers.filter { marker ->
-            initContent.contains(marker) && !selfContent.contains(marker)
-        }
+        val hiddenFromUs = Rules.denyListHidden(initContent, selfContent)
 
         if (hiddenFromUs.isEmpty()) return null
 

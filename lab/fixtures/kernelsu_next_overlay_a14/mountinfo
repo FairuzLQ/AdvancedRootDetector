@@ -1,0 +1,2 @@
+22 1 253:6 / / ro,relatime shared:1 - ext4 /dev/block/dm-6 ro,seclabel
+301 22 0:78 / /system/bin ro,relatime shared:200 - overlay KSU ro,seclabel,lowerdir=/data/adb/modules/busybox/system/bin:/system/bin

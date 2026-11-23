@@ -1,0 +1,2 @@
+lrwxrwxrwx 1 root root 0 2026-06-28 13:01 /proc/812/exe -> /data/adb/apd
+lrwxrwxrwx 1 system system 0 2026-06-28 13:01 /proc/901/exe -> /vendor/bin/hw/vendor.qti.hardware.snap_apd@1.0-service

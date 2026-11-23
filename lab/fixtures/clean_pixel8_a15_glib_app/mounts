@@ -1,0 +1,6 @@
+/dev/block/dm-6 / erofs ro,seclabel,relatime 0 0
+/dev/block/dm-7 /vendor erofs ro,seclabel,relatime 0 0
+/dev/block/dm-8 /product erofs ro,seclabel,relatime 0 0
+/dev/block/loop12 /apex/com.android.runtime@1 erofs ro,seclabel,nodev,relatime 0 0
+tmpfs /apex tmpfs rw,seclabel,nosuid,nodev,noexec,relatime,mode=755 0 0
+/dev/block/dm-50 /data f2fs rw,lazytime,seclabel,nosuid,nodev,noatime,inline_xattr 0 0

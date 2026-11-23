@@ -4,6 +4,7 @@ import android.content.Context
 import id.jayatech.rootdetector.model.DetectorCategory
 import id.jayatech.rootdetector.model.RiskLevel
 import id.jayatech.rootdetector.model.RootIndicator
+import id.jayatech.rootdetector.rules.Rules
 
 /**
  * Detects Xposed Framework variants:
@@ -13,7 +14,7 @@ import id.jayatech.rootdetector.model.RootIndicator
  *  - Riru (Zygote injector, predecessor to Zygisk)
  *  - Pine / Dreamland
  */
-internal class XposedDetector(context: Context) : BaseDetector(context) {
+internal class XposedDetector(context: Context, props: PropSnapshot = PropSnapshot()) : BaseDetector(context, props) {
 
     private val xposedPackages = listOf(
         "org.lsposed.lspatch",
@@ -103,12 +104,13 @@ internal class XposedDetector(context: Context) : BaseDetector(context) {
         val evidence = mutableListOf<String>()
         for (cls in bridgeClasses) {
             try {
-                Class.forName(cls)
+                // initialize=false: don't run the framework's static initializers in our process
+                Class.forName(cls, false, javaClass.classLoader)
                 evidence += cls
             } catch (_: ClassNotFoundException) {
                 // expected on clean devices
-            } catch (e: Exception) {
-                // class exists but failed to init — still evidence of presence
+            } catch (e: Throwable) {
+                // class exists but failed to link (LinkageError etc.) — still evidence of presence
                 evidence += "$cls (found but load error: ${e.javaClass.simpleName})"
             }
         }
@@ -147,9 +149,9 @@ internal class XposedDetector(context: Context) : BaseDetector(context) {
         )
         for (cls in lspatchClasses) {
             try {
-                Class.forName(cls)
+                Class.forName(cls, false, javaClass.classLoader)
                 evidence += cls
-            } catch (_: Exception) {}
+            } catch (_: Throwable) {}
         }
         try {
             val apkDir = java.io.File(context.packageCodePath).parentFile
@@ -169,13 +171,9 @@ internal class XposedDetector(context: Context) : BaseDetector(context) {
 
     private fun detectXposedMaps(): RootIndicator? {
         // Only match unambiguous Xposed-specific library names in process maps
-        val patterns = listOf("XposedBridge", "liblspd", "libedxp", "libriru", "lspatch_loader")
-        val evidence = mutableListOf<String>()
-        try {
-            java.io.File("/proc/self/maps").readLines().forEach { line ->
-                if (patterns.any { line.contains(it) }) evidence += line.trim()
-            }
-        } catch (_: Exception) {}
+        val evidence = try {
+            Rules.xposedMapsLines(java.io.File("/proc/self/maps").readLines())
+        } catch (_: Exception) { emptyList() }
         return if (evidence.isNotEmpty()) RootIndicator(
             id = "xposed_maps",
             category = DetectorCategory.XPOSED,

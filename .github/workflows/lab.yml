@@ -1,0 +1,177 @@
+name: Root Detection Lab
+
+on:
+  push:
+    branches: [ main, "claude/**" ]
+  pull_request:
+  workflow_dispatch:
+  # Weekly run with the newest Frida / Magisk: early warning when a new tool release
+  # breaks a detection. (GitHub runs schedules from the default branch only.)
+  schedule:
+    - cron: "17 2 * * 1"
+
+
+concurrency:
+  group: lab-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Fast: pure Kotlin + C++ rules against lab/fixtures (no Android SDK needed).
+  host-lab:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+      - name: Run rule lab
+        run: gradle -p lab/host test --no-daemon
+      - name: Publish report
+        if: always()
+        run: '[ -f lab/REPORT.md ] && cat lab/REPORT.md >> "$GITHUB_STEP_SUMMARY" || true'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: host-lab-report
+          path: lab/REPORT.md
+
+  # libFuzzer over the native rules (they parse untrusted /proc text inside the host app).
+  fuzz-native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang + libFuzzer runtime
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq clang libclang-rt-dev > /dev/null
+      - name: Fuzz signatures.h (90 s)
+        run: |
+          clang++ -std=c++17 -g -O1 -fsanitize=fuzzer,address,undefined \
+            lab/native/fuzz_signatures.cpp -o fuzz_signatures
+          mkdir -p corpus && cat lab/fixtures/*/* > corpus/seed_all 2>/dev/null || true
+          for f in lab/fixtures/*/*; do cp "$f" "corpus/$(echo "$f" | tr '/' '_')"; done
+          ./fuzz_signatures corpus -max_total_time=90 -max_len=4096 -timeout=5 -print_final_stats=1
+
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install NDK + CMake
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.1.12297006" "cmake;3.22.1" > /dev/null
+      - name: Build demo APK (debug for the lab, release to catch R8/minify issues)
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug :app:assembleRelease --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+
+  # Real: live x86_64 emulator + real Frida server/agent + real JDWP debugger.
+  emulator-lab:
+    needs: build-apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # API 28: report-only until the run-as/test fix (collect()) has been green for a while.
+    continue-on-error: ${{ matrix.api == 28 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [ 28, 30, 34, 35 ]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: app-debug
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install frida-tools
+        run: pip install frida-tools
+      - name: Run scenarios on emulator
+        timeout-minutes: 15
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: bash lab/emulator/run_scenarios.sh app-debug.apk baseline frida_server frida_attach frida_hook jdwp_debugger
+      - name: Check results
+        if: always()
+        run: |
+          set -o pipefail
+          python3 lab/emulator/check.py lab/emulator/out ${{ matrix.api }} \
+            baseline,frida_server,frida_attach,frida_hook,jdwp_debugger | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: emulator-lab-api${{ matrix.api }}
+          path: lab/emulator/out
+
+  # Experimental: Magisk via rootAVD. Report-only until proven stable.
+  magisk-lab:
+    needs: build-apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        # google_apis x86_64 ships arm64 translation on the native bridge, which keeps
+        # Zygisk from loading; the AOSP "default" image is tried to exercise Zygisk + DenyList.
+        target: [ google_apis, default ]
+    env:
+      SYSIMG: "system-images;android-30;${{ matrix.target }};x86_64"
+      # avdmanager and emulator must agree on where AVDs live (they did not by default).
+      ANDROID_AVD_HOME: /home/runner/.android/avd
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: app-debug
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Create AVD
+        run: |
+          mkdir -p "$ANDROID_AVD_HOME"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "$SYSIMG" emulator platform-tools > /dev/null || true
+          echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd -n lab -k "$SYSIMG" --force
+          "$ANDROID_HOME/emulator/emulator" -list-avds
+      - name: Root with rootAVD and scan (default, Zygisk, Zygisk + DenyList)
+        timeout-minutes: 35
+        run: bash lab/emulator/magisk_lab.sh app-debug.apk lab system-images/android-30/${{ matrix.target }}/x86_64/ramdisk.img
+      - name: Check results
+        if: always()
+        run: |
+          set -o pipefail
+          python3 lab/emulator/check.py lab/emulator/out magisk-api30-${{ matrix.target }} \
+            magisk,magisk_zygisk,magisk_zygisk_denylist | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: magisk-lab-${{ matrix.target }}
+          path: |
+            lab/emulator/out
+            /tmp/emulator.log

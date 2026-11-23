@@ -1,0 +1,3 @@
+must props_bootloader
+mustnot props_selinux
+mustnot props_root_runtime

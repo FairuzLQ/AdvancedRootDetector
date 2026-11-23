@@ -1,0 +1,2 @@
+KernelSU Next (GKI LKM mode), modules mounted with overlayfs (device name "KSU"), app is
+NOT on the umount list. Custom GKI build string carries a "-ksu" tag.

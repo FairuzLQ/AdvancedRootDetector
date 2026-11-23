@@ -3,6 +3,12 @@ plugins {
     alias(libs.plugins.kotlin.android)
 }
 
+// Release signing: the local keystore (../rootdetector-release.jks), or in CI the keystore
+// decoded from the RELEASE_KEYSTORE_BASE64 secret (RELEASE_KEYSTORE_PATH + *_PASSWORD/ALIAS env).
+// Without any keystore the release build falls back to the debug key so it stays installable.
+fun env(name: String): String? = System.getenv(name)?.takeIf { it.isNotEmpty() }
+val releaseKeystore = file(env("RELEASE_KEYSTORE_PATH") ?: "../rootdetector-release.jks")
+
 android {
     namespace = "id.jayatech.rootdetector.app"
     compileSdk = libs.versions.compileSdk.get().toInt()
@@ -11,16 +17,17 @@ android {
         applicationId = "id.jayatech.rootdetector.app"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 22
-        versionName = "1.5.6"
+        versionCode = 27
+        versionName = "1.9.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
         create("release") {
-            storeFile = file("../rootdetector-release.jks")
-            storePassword = "rootdetector2024"
-            keyAlias = "rootdetector"
-            keyPassword = "rootdetector2024"
+            storeFile = releaseKeystore
+            storePassword = env("RELEASE_KEYSTORE_PASSWORD") ?: "rootdetector2024"
+            keyAlias = env("RELEASE_KEY_ALIAS") ?: "rootdetector"
+            keyPassword = env("RELEASE_KEY_PASSWORD") ?: "rootdetector2024"
         }
     }
 
@@ -29,7 +36,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = signingConfigs.getByName(if (releaseKeystore.exists()) "release" else "debug")
         }
     }
 
@@ -51,4 +58,8 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
+
+    // Device lab (Firebase Test Lab): scan on real, clean devices — see lab/firebase/
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.junit)
 }

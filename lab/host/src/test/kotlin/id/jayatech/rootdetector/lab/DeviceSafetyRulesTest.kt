@@ -1,0 +1,93 @@
+package id.jayatech.rootdetector.lab
+
+import id.jayatech.rootdetector.rules.Rules
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * Unit coverage for the device-safety pure rules (accessibility abuse, MITM proxy/VPN/CA).
+ * These signals come from Android APIs, not /proc captures, so they are unit-tested here
+ * rather than as fixture scenarios in RuleLabTest.
+ */
+class DeviceSafetyRulesTest {
+
+    @Test fun parsesEnabledAccessibilityServices() {
+        val s = "com.foo/.A:com.bar/com.bar.B: :bad"
+        assertEquals(listOf("com.foo/.A", "com.bar/com.bar.B"), Rules.parseEnabledAccessibilityServices(s))
+        assertTrue(Rules.parseEnabledAccessibilityServices(null).isEmpty())
+        assertTrue(Rules.parseEnabledAccessibilityServices("").isEmpty())
+    }
+
+    @Test fun stockAccessibilityServicesAreNotThreats() {
+        // TalkBack + a password manager enabled: both are legitimate, so nothing is reported.
+        val stock = "com.google.android.marvin.talkback/com.google.android.marvin.talkback.TalkBackService" +
+            ":com.bitwarden/com.x8bit.bitwarden.Accessibility"
+        assertTrue(Rules.thirdPartyAccessibilityPackages(stock).isEmpty())
+    }
+
+    @Test fun thirdPartyAccessibilityIsReported() {
+        val s = "com.google.android.marvin.talkback/.TalkBackService:com.anydesk.anydeskandroid/.AdControlService"
+        assertEquals(listOf("com.anydesk.anydeskandroid"), Rules.thirdPartyAccessibilityPackages(s))
+        // and that package is a known remote-control app → the detector escalates it to HIGH
+        assertTrue("com.anydesk.anydeskandroid" in Rules.REMOTE_CONTROL_PACKAGES)
+    }
+
+    @Test fun httpProxyDetection() {
+        assertTrue(Rules.proxyIsSet("10.0.0.2", "8080"))
+        assertFalse(Rules.proxyIsSet(null, "8080"))
+        assertFalse(Rules.proxyIsSet("", "8080"))
+        assertFalse(Rules.proxyIsSet("10.0.0.2", "0"))
+        assertFalse(Rules.proxyIsSet("10.0.0.2", "notaport"))
+
+        assertEquals("proxy.local" to "3128", Rules.parseHttpProxySetting("proxy.local:3128"))
+        assertEquals(null, Rules.parseHttpProxySetting(":0"))
+        assertEquals(null, Rules.parseHttpProxySetting(""))
+        assertEquals(null, Rules.parseHttpProxySetting(null))
+    }
+
+    @Test fun vpnInterfaceNames() {
+        listOf("tun0", "ppp0", "tap1", "ipsec0", "wg0").forEach {
+            assertTrue(it, Rules.isVpnInterfaceName(it))
+        }
+        listOf("wlan0", "eth0", "rmnet0", "lo", "dummy0").forEach {
+            assertFalse(it, Rules.isVpnInterfaceName(it))
+        }
+    }
+
+    @Test fun userCaAliasVsSystem() {
+        assertTrue(Rules.isUserCaAlias("user:1234"))
+        assertFalse(Rules.isUserCaAlias("system:1234"))
+    }
+
+    @Test fun obscuredTouchClassification() {
+        assertEquals(Rules.ObscuredTouch.NONE, Rules.classifyTouchFlags(0))
+        assertEquals(Rules.ObscuredTouch.FULL, Rules.classifyTouchFlags(0x1))
+        assertEquals(Rules.ObscuredTouch.PARTIAL, Rules.classifyTouchFlags(0x2))
+        assertEquals(Rules.ObscuredTouch.FULL, Rules.classifyTouchFlags(0x3)) // full wins
+        assertEquals(Rules.ObscuredTouch.NONE, Rules.classifyTouchFlags(0x10)) // unrelated flag
+    }
+
+    @Test fun mirroringDisplayClassification() {
+        assertFalse(Rules.isMirroringDisplay(0, 8))           // default display never counts
+        assertTrue(Rules.isMirroringDisplay(2, 8))            // public presentation (Cast/HDMI)
+        assertFalse(Rules.isMirroringDisplay(3, 8 or 4))      // private virtual display
+        assertFalse(Rules.isMirroringDisplay(4, 0))           // non-presentation secondary
+    }
+
+    @Test fun testInfrastructurePackagesAreExcluded() {
+        // Firebase Test Lab / Espresso harness holds SYSTEM_ALERT_WINDOW but is not on a user device.
+        assertTrue(Rules.isTestInfrastructurePackage("com.google.android.apps.common.testing.services"))
+        assertTrue(Rules.isTestInfrastructurePackage("androidx.test.services"))
+        assertFalse(Rules.isTestInfrastructurePackage("com.anydesk.anydeskandroid"))
+    }
+
+    @Test fun parsesFlattenedComponentList() {
+        // Used for enabled notification listeners as well as accessibility services.
+        val s = "com.foo/.NL:com.bar/com.bar.Listener: :junk"
+        assertEquals(listOf("com.foo/.NL", "com.bar/com.bar.Listener"), Rules.parseFlattenedComponents(s))
+        assertEquals("com.foo", Rules.flattenedComponentPackage("com.foo/.NL"))
+        assertTrue(Rules.parseFlattenedComponents(null).isEmpty())
+    }
+}
