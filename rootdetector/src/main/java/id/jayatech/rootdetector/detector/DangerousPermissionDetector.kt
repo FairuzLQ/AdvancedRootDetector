@@ -32,7 +32,9 @@ internal class DangerousPermissionDetector(context: Context, props: PropSnapshot
         }
 
         val overlay = mutableListOf<String>()
+        val overlayFirstParty = mutableListOf<String>()
         val smsReaders = mutableListOf<String>()
+        val smsFirstParty = mutableListOf<String>()
         val self = context.packageName
 
         for (pi in packages) {
@@ -41,14 +43,17 @@ internal class DangerousPermissionDetector(context: Context, props: PropSnapshot
             if (Rules.isTestInfrastructurePackage(pi.packageName)) continue
             if ((ai.flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0) continue
 
-            if (isGranted(pi, "android.permission.SYSTEM_ALERT_WINDOW")) {
-                overlay += "${pi.packageName} — ${label(ai)}"
-            }
-            if (isGranted(pi, "android.permission.RECEIVE_SMS") ||
+            val overlayGranted = isGranted(pi, "android.permission.SYSTEM_ALERT_WINDOW")
+            val smsGranted = isGranted(pi, "android.permission.RECEIVE_SMS") ||
                 isGranted(pi, "android.permission.READ_SMS")
-            ) {
-                smsReaders += "${pi.packageName} — ${label(ai)}"
-            }
+            if (!overlayGranted && !smsGranted) continue
+
+            // A /data-delivered first-party app (signed by the device platform/OEM key) is not a
+            // threat even though it lacks FLAG_SYSTEM — report its capability as INFO, not a concern.
+            val firstParty = SignerTrust.isPlatformSigned(context, pi.packageName)
+            val entry = "${pi.packageName} — ${label(ai)}"
+            if (overlayGranted) (if (firstParty) overlayFirstParty else overlay) += entry
+            if (smsGranted) (if (firstParty) smsFirstParty else smsReaders) += entry
         }
 
         val out = mutableListOf<RootIndicator>()
@@ -57,10 +62,21 @@ internal class DangerousPermissionDetector(context: Context, props: PropSnapshot
                 id = "overlay_capable_apps",
                 category = DetectorCategory.OVERLAY,
                 title = "Apps Can Draw Over Other Apps",
-                detail = "Non-system apps hold the \"display over other apps\" permission — used for " +
+                detail = "Third-party apps hold the \"display over other apps\" permission — used for " +
                     "tapjacking and fake-login overlays placed on top of the real screen.",
                 risk = RiskLevel.MEDIUM,
                 evidence = overlay.take(15)
+            )
+        }
+        if (overlayFirstParty.isNotEmpty()) {
+            out += RootIndicator(
+                id = "overlay_firstparty_apps",
+                category = DetectorCategory.OVERLAY,
+                title = "First-Party Apps With Overlay (info)",
+                detail = "Platform/OEM-signed apps (e.g. the browser, voice recorder) hold the overlay " +
+                    "permission. Reported for transparency; a device-signed app is not treated as a threat.",
+                risk = RiskLevel.INFO,
+                evidence = overlayFirstParty.take(15)
             )
         }
         if (smsReaders.isNotEmpty()) {
@@ -68,10 +84,20 @@ internal class DangerousPermissionDetector(context: Context, props: PropSnapshot
                 id = "sms_reader_apps",
                 category = DetectorCategory.SMS,
                 title = "Apps Can Read Incoming SMS",
-                detail = "Non-system apps can read incoming text messages, which is how banking OTPs and " +
+                detail = "Third-party apps can read incoming text messages, which is how banking OTPs and " +
                     "2FA codes get intercepted. Confirm each app has a reason to read SMS.",
                 risk = RiskLevel.LOW,
                 evidence = smsReaders.take(15)
+            )
+        }
+        if (smsFirstParty.isNotEmpty()) {
+            out += RootIndicator(
+                id = "sms_reader_firstparty_apps",
+                category = DetectorCategory.SMS,
+                title = "First-Party Apps Can Read SMS (info)",
+                detail = "Platform/OEM-signed apps (e.g. Messages) can read SMS. Reported for transparency.",
+                risk = RiskLevel.INFO,
+                evidence = smsFirstParty.take(15)
             )
         }
         return out

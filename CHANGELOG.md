@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.9.2] — Device-relative signer trust (OEM-app false-positive fix)
+
+### Fix: first-party OEM apps flagged as overlay/SMS threats
+On a clean Samsung A51, preinstalled apps delivered under `/data` (Samsung Browser, Voice Recorder,
+Samsung Members) lack `FLAG_SYSTEM`, so the `FLAG_SYSTEM` filter missed them and they were reported
+as MEDIUM "Apps Can Draw Over Other Apps" — a false positive. Fixed with **`SignerTrust`**: an app is
+treated as first-party if its signing certificate matches that of **any `FLAG_SYSTEM` package on this
+device** (no hardcoded cert list — works on any brand; verified that `com.sec.android.app.sbrowser`
+shares signer `34df0e7a…` with the platform `android` package, while AnyDesk does not).
+
+A capable first-party app is now reported as **INFO** (`overlay_firstparty_apps`,
+`sms_reader_firstparty_apps`) — the capability is still shown for transparency, but a device-signed
+app is not a threat. Genuinely third-party apps keep their real level: on the same device AnyDesk
+stays MEDIUM (`remote_control_apps`) and a real third-party overlay app (Krom Staging) stays MEDIUM
+(`overlay_capable_apps`). Root score unaffected (device-safety axis only).
+
 ## [1.9.1] — Hidden-Magisk (repackaged stub) detection + Android-10 crash fix
 
 ### New: catch a hidden/repackaged root manager (`magisk_hidden_stub`, `magisk_masquerade`)
