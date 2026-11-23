@@ -28,6 +28,7 @@ object RootDetector {
             MagiskDetector(context),
             KernelSUDetector(context),
             APatchDetector(context),
+            ApatchKpmDetector(context),
             ZygiskDetector(context),
             XposedDetector(context),
             BinaryDetector(context),
