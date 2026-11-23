@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.9.1] — Hidden-Magisk (repackaged stub) detection + Android-10 crash fix
+
+### New: catch a hidden/repackaged root manager (`magisk_hidden_stub`, `magisk_masquerade`)
+"Hide the Magisk app" repackages the manager under a random, fully-obfuscated package (e.g.
+`mp.douxd`, label "Settings"), and with DenyList the app's `/sbin` mounts are stripped from the
+denylisted process's namespace — so the package, file, mount, socket and `su` checks all see
+**nothing** (verified on-device: a fully-hidden Magisk dropped the scan from 19 Magisk indicators
+to 0). The existing stub checks miss it because the label is custom and the DEX has no
+`com.topjohnwu.magisk` strings. Two obfuscation-proof signals are added (permissions and the
+visible label cannot be stripped by repackaging and survive DenyList):
+
+- **`magisk_hidden_stub`** (CRITICAL) — a non-system app requesting the self-installing root-manager
+  permission trio `REQUEST_INSTALL_PACKAGES` + `UPDATE_PACKAGES_WITHOUT_USER_ACTION` +
+  `HIDE_OVERLAY_WINDOWS`. The stub downloads/installs the full manager and hides overlays during the
+  superuser prompt; this exact trio is not requested by normal apps or even app stores (which never
+  `HIDE_OVERLAY_WINDOWS`). Caught the obfuscated `mp.douxd` stub on-device.
+- **`magisk_masquerade`** (HIGH) — a non-system app whose visible label is a core system label
+  (Settings/Magisk/KernelSU/APatch) **and** which can install packages. The installer-permission
+  requirement keeps the false-positive rate low.
+
+Verified: fires on the hidden stub (emulator); **no false positive** on a real phone with banking /
+store / keyboard apps installed.
+
+### Fix: native scan crashed (SIGSEGV) on Android-10 execute-only memory
+`check_inline_hooks` compared the first bytes of libc functions in memory vs on disk via
+`memcpy(mem, sym, 16)`. On Android 10+ those `.text` pages are **execute-only (XOM, `--x`)**, so the
+read faults with `SIGSEGV`/`SEGV_ACCERR` and the **entire native scan dies before completing** —
+reproduced 5/5 on a real Redmi Note 8 (Android 10). The page is now made temporarily readable with
+`mprotect` before the read (and the function skipped if that fails). Crash rate 5/5 → **0/5**, scan
+completes. This affected every Android-10 device with XOM libc, not just this one.
+
 ## [1.9.0] — APatch + KPM Behavioral Detection
 
 ### New: catch kernel-level root hiding that static checks miss (`ApatchKpmDetector`)

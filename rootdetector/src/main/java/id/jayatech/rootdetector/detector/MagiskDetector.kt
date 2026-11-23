@@ -106,6 +106,11 @@ internal class MagiskDetector(context: Context, props: PropSnapshot = PropSnapsh
         //    contains Magisk class path strings. Scan via ZipFile directly on APK files.
         detectRenamedMagiskApk()?.let { findings += it }
 
+        // Obfuscation-proof hidden-stub detection: permission fingerprint + system-label masquerade.
+        // Catches a repackaged manager ("Hide the Magisk app") whose DEX is obfuscated and whose
+        // files/mounts are stripped by DenyList — permissions and labels cannot be hidden.
+        findings += detectHiddenManagerStub()
+
         // 9. ps subprocess — alternative to native proc scan.
         detectRootDaemonsViaPs()?.let { findings += it }
 
@@ -166,6 +171,77 @@ internal class MagiskDetector(context: Context, props: PropSnapshot = PropSnapsh
      *  - The no-launcher check filters widget/service-only apps, combined with the
      *    very specific label requirement makes FP rate near zero.
      */
+    /**
+     * Catches a hidden/repackaged root-manager app (Magisk "Hide the Magisk app", or a KernelSU/
+     * APatch stub) that the label- and DEX-based checks miss because it is obfuscated and uses a
+     * custom label. Both signals are obfuscation-proof — permissions and the visible label survive
+     * repackaging and DenyList (verified on a real device: Magisk hidden as "Settings", package
+     * mp.douxd, fully obfuscated DEX, no files/mounts visible — caught by both signals below).
+     *
+     *  1. Self-installer fingerprint (CRITICAL): a non-system app requesting REQUEST_INSTALL_PACKAGES
+     *     + UPDATE_PACKAGES_WITHOUT_USER_ACTION + HIDE_OVERLAY_WINDOWS. The hidden stub silently
+     *     downloads/installs the full manager and hides overlays during the superuser prompt — this
+     *     exact trio is not requested by normal apps or even app stores (which never HIDE_OVERLAY).
+     *  2. System-app masquerade (HIGH): a non-system app whose visible label is a core system label
+     *     ("Settings"/"Magisk"/"KernelSU"/"APatch") AND which can install packages — the default
+     *     disguise of a hidden manager. The installer-permission requirement keeps the FP rate low.
+     */
+    private fun detectHiddenManagerStub(): List<RootIndicator> {
+        val pm = context.packageManager
+        val selfPkg = context.packageName
+        val P_INSTALL = "android.permission.REQUEST_INSTALL_PACKAGES"
+        val stubTrio = setOf(
+            P_INSTALL,
+            "android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION",
+            "android.permission.HIDE_OVERLAY_WINDOWS",
+        )
+        val masqueradeLabels = setOf("settings", "magisk", "kernelsu", "ksu", "apatch")
+        val stubEvidence = mutableListOf<String>()
+        val masqEvidence = mutableListOf<String>()
+        try {
+            @Suppress("DEPRECATION")
+            val pkgs = pm.getInstalledPackages(android.content.pm.PackageManager.GET_PERMISSIONS)
+            for (pi in pkgs) {
+                val ai = pi.applicationInfo ?: continue
+                val pkg = ai.packageName
+                if (pkg == selfPkg || magiskPackages.contains(pkg)) continue
+                // Third-party only: a genuine system app may legitimately hold installer permissions.
+                if ((ai.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0) continue
+                val perms = pi.requestedPermissions?.toHashSet() ?: hashSetOf()
+                val label = pm.getApplicationLabel(ai).toString().lowercase().trim()
+                when {
+                    stubTrio.all { it in perms } ->
+                        stubEvidence += "$pkg (label='$label')"
+                    label in masqueradeLabels && P_INSTALL in perms ->
+                        masqEvidence += "$pkg (label='$label')"
+                }
+            }
+        } catch (_: Exception) { return emptyList() }
+
+        val out = mutableListOf<RootIndicator>()
+        if (stubEvidence.isNotEmpty()) out += RootIndicator(
+            id = "magisk_hidden_stub",
+            category = DetectorCategory.MAGISK,
+            title = "Hidden Root-Manager Stub Detected",
+            detail = "Non-system app with the self-installing root-manager permission fingerprint " +
+                "(REQUEST_INSTALL_PACKAGES + UPDATE_PACKAGES_WITHOUT_USER_ACTION + HIDE_OVERLAY_WINDOWS). " +
+                "This is a repackaged Magisk/KernelSU/APatch manager hidden via 'Hide the app' — it " +
+                "survives DenyList and DEX obfuscation.",
+            risk = RiskLevel.CRITICAL,
+            evidence = stubEvidence.take(5)
+        )
+        if (masqEvidence.isNotEmpty()) out += RootIndicator(
+            id = "magisk_masquerade",
+            category = DetectorCategory.MAGISK,
+            title = "App Masquerading as System App",
+            detail = "A non-system app uses a core system label (Settings/Magisk/KernelSU/APatch) and " +
+                "can install packages — the default disguise of a hidden root-manager.",
+            risk = RiskLevel.HIGH,
+            evidence = masqEvidence.take(5)
+        )
+        return out
+    }
+
     private fun detectStubApk(): RootIndicator? {
         val pm = context.packageManager
         val exactLabels = setOf("magisk", "kernelsu", "ksu manager", "supersu", "superuser su")

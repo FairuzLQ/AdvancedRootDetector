@@ -457,6 +457,16 @@ static std::vector<std::string> check_inline_hooks() {
 
         unsigned char disk[N], mem[N];
         if (!read_file_bytes(info.dli_fname, off, disk, N)) continue;
+        // Reading the in-memory function bytes faults (SIGSEGV/SEGV_ACCERR) on Android 10+
+        // execute-only (XOM) .text pages, which are mapped --x (not readable). Make the page(s)
+        // temporarily readable first; if that fails, skip this function rather than crash the scan.
+        {
+            long ps = sysconf(_SC_PAGESIZE);
+            uintptr_t pstart = (uintptr_t)sym & ~((uintptr_t)ps - 1);
+            uintptr_t pend   = ((uintptr_t)sym + N - 1) & ~((uintptr_t)ps - 1);
+            if (mprotect((void*)pstart, (size_t)(pend - pstart) + (size_t)ps,
+                         PROT_READ | PROT_EXEC) != 0) continue;
+        }
         memcpy(mem, sym, N);
         if (memcmp(disk, mem, N) != 0) {
             hits.push_back(std::string(funcs[i]) + "() in " + info.dli_fname +
