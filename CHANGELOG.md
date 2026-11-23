@@ -1,5 +1,51 @@
 # Changelog
 
+## [1.9.0] — APatch + KPM Behavioral Detection
+
+### New: catch kernel-level root hiding that static checks miss (`ApatchKpmDetector`)
+A well-configured APatch (KernelPatch) install is nearly invisible to userspace. On a real
+Redmi Note 8 (ginkgo, Android 10) the manager package is hidden, `/proc/version` is stock, there
+is no `/dev/kp` node and the props are unreadable, so **every static APatch/KPM artifact check
+produced zero indicators** and `isRooted()` returned false — the device looked clean. Instead of
+looking for artifacts, these probes provoke the kernel hooks the KPM hide modules (panda-hide /
+tphide) install and catch the kernel lying. Each probe carries its own control for ~zero false
+positives and reports on the root axis (`DetectorCategory.APATCH`):
+
+- **openat/faccessat honeypot** (`kpm_openat_hide`, CRITICAL) — a file this app creates via
+  `rename` (not hooked) stats OK but `open()`/`access()` returns `ENOENT`. Impossible on a clean
+  kernel: the `openat` hook that hides Frida/root paths is lying. A benign-named control file must
+  open first, so the probe stays silent on a clean device.
+- **PTRACE_TRACEME idempotency** (`kpm_ptrace_fake`, CRITICAL) — a clean kernel returns `EPERM`
+  on the second `PTRACE_TRACEME`; tphide returns 0 twice. Run in a throwaway child and flagged
+  only when both calls succeed, so an attached real debugger does not false-positive.
+- **self-trace TracerPid / stat consistency** (`kpm_tracerpid_hide`, HIGH) — `PTRACE_ATTACH` a
+  forked child; if the attach succeeds but the child's `/proc/<pid>/status` TracerPid reads 0 or
+  its stat state is not `t`, the kernel is scrubbing ptrace evidence. Only evaluated when the
+  attach truly succeeds (no Yama ptrace_scope false-positive).
+- **APatch sucompat su-path divergence** (`apatch_supath`, CRITICAL) — `/system/bin/kp` stats OK
+  (the sucompat hook redirects it to `/system/bin/sh` for su-allowed uids) while `open()` returns
+  `ENOENT`. A unique APatch signature; silent for apps that were not granted root.
+- **tphide interface scrub** (`kpm_zzz_iface`, HIGH) — tphide renames `tun*` to `zzz*` in
+  `/proc/net/dev` and `/proc/net/route`; no legitimate interface is ever named `zzz*`.
+
+The heavy lifting is native (new JNI `nativeKpmProbe(filesDir)`), so it bypasses Java-layer hooks.
+These are root-axis signals: a positive here does mean the OS is tampered. `isRooted`/`riskScore`
+keep their exact meaning; the device-safety axis from 1.7/1.8 is unchanged.
+
+### Verified on-device (real Redmi Note 8, ginkgo, Android 10, APatch + panda-hide KPM)
+With the panda-hide KPM loaded the scan goes from **2 indicators / score 45** (bootloader +
+hardware attestation only — APatch otherwise invisible to an unprivileged app) to **4 / 100**,
+firing `kpm_openat_hide` (CRITICAL) and `kpm_tracerpid_hide` (HIGH). With the KPM unloaded, on a
+clean (unrooted) boot, and under Magisk, the new probes stay **silent — no false positive**. No
+crash.
+
+| Device state | score | APatch/KPM detected |
+|---|---|---|
+| Clean (unrooted, unlocked bootloader) | 45 | no (correct, no false positive) |
+| APatch core only (KPM unloaded, app not granted root) | 45 | only via hardware attestation |
+| APatch + panda-hide KPM loaded | 100 | yes — `kpm_openat_hide` + `kpm_tracerpid_hide` |
+| Magisk (manager app visible) | 100 | yes — `magisk_pkg` |
+
 ## [1.8.0] — Runtime Screen Guard + Device-Admin Detection
 
 ### Bug fix — demo app crashed when its screen was torn down mid-scan
