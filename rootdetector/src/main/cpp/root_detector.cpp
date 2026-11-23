@@ -24,6 +24,9 @@
 #include <pthread.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/wait.h>
+#include <sys/ptrace.h>
+#include <limits.h>
 
 #define TAG "RDNative"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
@@ -1145,6 +1148,170 @@ static std::vector<std::string> detect_emulator_native() {
 }
 
 // =============================================================================
+// APatch + KPM behavioral probes (panda-hide / tphide). See detector-enhancements/.
+// Provoke the kernel hooks and catch the kernel lying. ~zero false positives.
+// =============================================================================
+
+#ifndef PTRACE_TRACEME
+#define PTRACE_TRACEME 0
+#endif
+#ifndef PTRACE_ATTACH
+#define PTRACE_ATTACH 16
+#endif
+#ifndef PTRACE_DETACH
+#define PTRACE_DETACH 17
+#endif
+
+// openat/faccessat hidden-path honeypot: a file we create (via rename, which is not
+// hooked) stats OK but cannot be opened by name -> kernel openat hook is hiding paths.
+static std::vector<std::string> detect_openat_hiding_honeypot(const char* writable_dir) {
+    std::vector<std::string> hits;
+    if (!writable_dir || !*writable_dir) return hits;
+
+    static const char* kBaitNames[] = {
+        "frida-agent-64.so", "frida-agent.so", "re.frida.server",
+        "frida-gadget.so", "linjector.so", nullptr
+    };
+
+    char srcpath[PATH_MAX];
+    snprintf(srcpath, sizeof(srcpath), "%s/rd_src_probe.tmp", writable_dir);
+
+    auto make_src = [&]() -> bool {
+        int fd = (int)syscall(__NR_openat, AT_FDCWD, srcpath,
+                              O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC, 0600);
+        if (fd < 0) return false;
+        (void)!write(fd, "x", 1);
+        close(fd);
+        return true;
+    };
+
+    // negative control: a benign name MUST create/rename/stat/open cleanly here
+    {
+        if (!make_src()) return hits;
+        char ctl[PATH_MAX];
+        snprintf(ctl, sizeof(ctl), "%s/rd_benign_probe.so", writable_dir);
+        bool renamed = rename(srcpath, ctl) == 0;
+        bool ctl_stat = renamed && file_exists_syscall(ctl);
+        int cfd = ctl_stat ? (int)syscall(__NR_openat, AT_FDCWD, ctl, O_RDONLY | O_CLOEXEC, 0) : -1;
+        bool ctl_open = cfd >= 0;
+        if (cfd >= 0) close(cfd);
+        unlink(ctl);
+        unlink(srcpath);
+        if (!ctl_stat || !ctl_open) return hits;  // odd environment -> avoid FP
+    }
+
+    for (int i = 0; kBaitNames[i]; i++) {
+        if (!make_src()) continue;
+        char bait[PATH_MAX];
+        snprintf(bait, sizeof(bait), "%s/%s", writable_dir, kBaitNames[i]);
+        if (rename(srcpath, bait) != 0) { unlink(srcpath); continue; }
+
+        bool exists_stat = file_exists_syscall(bait);
+        errno = 0;
+        int bfd = (int)syscall(__NR_openat, AT_FDCWD, bait, O_RDONLY | O_CLOEXEC, 0);
+        int oerr = errno;
+        bool open_ok = bfd >= 0;
+        if (bfd >= 0) close(bfd);
+        errno = 0;
+        long acc = syscall(__NR_faccessat, AT_FDCWD, bait, F_OK);
+        int aerr = errno;
+        unlink(bait);
+
+        if (exists_stat && !open_ok && oerr == ENOENT) {
+            char buf[256];
+            snprintf(buf, sizeof(buf),
+                     "openat hook: created '%s' stat=OK but open=ENOENT (kernel hides frida paths)",
+                     kBaitNames[i]);
+            hits.push_back(buf);
+        } else if (exists_stat && acc != 0 && aerr == ENOENT) {
+            char buf[256];
+            snprintf(buf, sizeof(buf),
+                     "faccessat hook: created '%s' stat=OK but access=ENOENT", kBaitNames[i]);
+            hits.push_back(buf);
+        }
+    }
+    return hits;
+}
+
+// PTRACE_TRACEME idempotency: clean kernels return EPERM on the 2nd call; tphide returns 0 twice.
+static bool detect_ptrace_traceme_fake() {
+    pid_t pid = fork();
+    if (pid < 0) return false;
+    if (pid == 0) {
+        long r1 = syscall(__NR_ptrace, PTRACE_TRACEME, 0, 0, 0);
+        long r2 = syscall(__NR_ptrace, PTRACE_TRACEME, 0, 0, 0);
+        _exit((r1 == 0 && r2 == 0) ? 42 : 0);
+    }
+    int status = 0;
+    waitpid(pid, &status, 0);
+    return WIFEXITED(status) && WEXITSTATUS(status) == 42;
+}
+
+// Self-trace consistency: attach a child, then its TracerPid/stat-state must reflect the trace.
+static std::vector<std::string> detect_tracerpid_hiding() {
+    std::vector<std::string> hits;
+    pid_t child = fork();
+    if (child < 0) return hits;
+    if (child == 0) {
+        for (volatile unsigned long i = 0; i < 300000000UL; i++) { }
+        _exit(0);
+    }
+    long ar = syscall(__NR_ptrace, PTRACE_ATTACH, child, 0, 0);
+    int status = 0;
+    if (ar == 0) {
+        waitpid(child, &status, 0);
+        char p[64];
+        snprintf(p, sizeof(p), "/proc/%d/status", child);
+        std::string s = read_file(p);
+        long tracer = -1;
+        size_t pos = s.find("TracerPid:");
+        if (pos != std::string::npos) tracer = strtol(s.c_str() + pos + 10, nullptr, 10);
+
+        char sp[64];
+        snprintf(sp, sizeof(sp), "/proc/%d/stat", child);
+        std::string stt = read_file(sp);
+        char state = '?';
+        size_t rp = stt.rfind(") ");
+        if (rp != std::string::npos && rp + 2 < stt.size()) state = stt[rp + 2];
+
+        if (tracer == 0)
+            hits.push_back("TracerPid hidden: PTRACE_ATTACH ok but /proc/<pid>/status TracerPid=0");
+        if (state != 't' && state != 'T' && state != '?') {
+            char b[112];
+            snprintf(b, sizeof(b),
+                     "trace-stop state hidden: /proc/<pid>/stat state='%c' (expected 't')", state);
+            hits.push_back(b);
+        }
+        syscall(__NR_ptrace, PTRACE_DETACH, child, 0, 0);
+    }
+    kill(child, SIGKILL);
+    waitpid(child, &status, 0);
+    return hits;
+}
+
+// APatch sucompat su-path redirect: stat(/system/bin/kp)=OK (redirected to sh) but open=ENOENT.
+static std::vector<std::string> detect_apatch_supath_divergence() {
+    std::vector<std::string> hits;
+    static const char* kSuPaths[] = { "/system/bin/kp", "/system/bin/su", nullptr };
+    for (int i = 0; kSuPaths[i]; i++) {
+        if (!file_exists_syscall(kSuPaths[i])) continue;  // stat/faccessat says it exists
+        errno = 0;
+        int fd = (int)syscall(__NR_openat, AT_FDCWD, kSuPaths[i], O_RDONLY | O_CLOEXEC, 0);
+        int oerr = errno;
+        bool open_ok = fd >= 0;
+        if (fd >= 0) close(fd);
+        if (!open_ok && oerr == ENOENT) {
+            char buf[200];
+            snprintf(buf, sizeof(buf),
+                     "%s: stat/access=OK but open=ENOENT -> APatch sucompat su-path redirect",
+                     kSuPaths[i]);
+            hits.push_back(buf);
+        }
+    }
+    return hits;
+}
+
+// =============================================================================
 // JNI bridge — aggregate all results
 // =============================================================================
 
@@ -1284,6 +1451,32 @@ Java_id_jayatech_rootdetector_detector_NativeDetector_nativeScan(JNIEnv* env, jo
 JNIEXPORT jboolean JNICALL
 Java_id_jayatech_rootdetector_detector_NativeDetector_nativeProbeKernelSU(JNIEnv*, jobject) {
     return probe_kernelsu_syscall_safe() ? JNI_TRUE : JNI_FALSE;
+}
+
+// APatch + KPM behavioral probes. Needs the app's writable dir for the openat honeypot.
+JNIEXPORT jobjectArray JNICALL
+Java_id_jayatech_rootdetector_detector_ApatchKpmDetector_nativeKpmProbe(JNIEnv* env, jobject, jstring jdir) {
+    std::vector<std::string> results;
+
+    const char* dir = jdir ? env->GetStringUTFChars(jdir, nullptr) : nullptr;
+    for (auto& s : detect_openat_hiding_honeypot(dir))
+        results.push_back("KPM_OPENAT_HIDE:" + s);
+    if (dir) env->ReleaseStringUTFChars(jdir, dir);
+
+    if (detect_ptrace_traceme_fake())
+        results.push_back("KPM_PTRACE_FAKE:PTRACE_TRACEME returns 0 twice — ptrace syscall hooked");
+
+    for (auto& s : detect_tracerpid_hiding())
+        results.push_back("KPM_TRACERPID_HIDE:" + s);
+
+    for (auto& s : detect_apatch_supath_divergence())
+        results.push_back("APATCH_SUPATH:" + s);
+
+    jclass strCls = env->FindClass("java/lang/String");
+    jobjectArray arr = env->NewObjectArray((jsize)results.size(), strCls, env->NewStringUTF(""));
+    for (int i = 0; i < (int)results.size(); i++)
+        env->SetObjectArrayElement(arr, i, env->NewStringUTF(results[i].c_str()));
+    return arr;
 }
 
 } // extern "C"
