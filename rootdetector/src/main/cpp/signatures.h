@@ -68,6 +68,7 @@ static const char* const SUSPICIOUS_PATTERNS[] = {
     "magisk", "zygisk", "shamiko", "lspd", "lspatch",
     "xposed", "riru", "frida", "objection", "apatch",
     "rezygisk", "zygnext", "dreamland", "pine_bridge", "kernelsu",
+    "gadget",  // frida-gadget (libgadget.so) — default name; redundant with thread-name/port signals
     nullptr
 };
 // Short patterns that must be whole tokens.
@@ -117,6 +118,21 @@ inline bool is_suspicious_maps_line(const std::string& line) {
     std::string path_lower = lower(path);
     if (!is_code_mapping(maps_perms(line), path_lower)) return false;
     return has_suspicious_name(path_lower);
+}
+
+// High-confidence Frida injection libraries by exact basename. No legitimate app ships these, so
+// they are flagged even under /data/app (where is_suspicious_maps_line is suppressed to avoid false
+// positives on ordinary app libraries) — this catches a frida-gadget repackaged into an app's own
+// lib dir AND a gadget/agent injected by frida-server into a running process.
+inline bool is_injection_lib_line(const std::string& line) {
+    std::string path_lower = lower(maps_path(line));
+    if (!is_code_mapping(maps_perms(line), path_lower)) return false;
+    static const char* const names[] = {
+        "libgadget.so", "libfrida", "frida-agent", "frida-gadget", nullptr
+    };
+    for (int i = 0; names[i]; i++)
+        if (path_lower.find(names[i]) != std::string::npos) return true;
+    return false;
 }
 
 // -----------------------------------------------------------------------------

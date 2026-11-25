@@ -101,6 +101,20 @@ internal class NativeDetector(context: Context, props: PropSnapshot = PropSnapsh
             )
         }
 
+        // Frida gadget/agent library mapped (high-confidence name, caught even in the app's own
+        // /data/app lib dir — e.g. a frida-gadget repackaged into the APK).
+        byPrefix["FRIDA_LIB"]?.takeIf { it.isNotEmpty() }?.let {
+            findings += RootIndicator(
+                id = "native_frida_lib",
+                category = DetectorCategory.DEBUG,
+                title = "[Native] Frida Library Mapped",
+                detail = "A Frida gadget/agent library (libgadget.so / libfrida / frida-agent) is mapped " +
+                    "into the process — in-process dynamic instrumentation is active.",
+                risk = RiskLevel.CRITICAL,
+                evidence = it.take(6)
+            )
+        }
+
         // Anonymous RWX pages (injected shellcode)
         byPrefix["ANON_RWX"]?.takeIf { it.isNotEmpty() }?.let {
             findings += RootIndicator(

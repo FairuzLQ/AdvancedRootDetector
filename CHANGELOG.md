@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.9.5] — Anti-Frida redundancy (frida-gadget caught by a second, native signal)
+
+Emulator lab finding: a **frida-gadget** repackaged into the app (no root, no frida-server) was caught
+by only **one** signal — `debug_frida_threads` (Java, Frida's thread names `frida-gadget` / `pool-frida`).
+A single Java hook that renames those threads would blind it. Added an independent **native** signal so
+hiding one no longer evades:
+
+- **`native_frida_lib`** (CRITICAL, DEBUG axis): the native scanner walks `/proc/self/maps` for a Frida
+  injection library by exact basename (`libgadget.so`, `libfrida*`, `frida-agent`) and flags it **even
+  under `/data/app`** — where the general keyword scan is deliberately suppressed to avoid false positives
+  on ordinary app libraries. No legitimate app ships these names, so false-positive risk is nil. Catches a
+  gadget repackaged into an app's own lib dir **and** a gadget/agent injected by frida-server into a live
+  process.
+- Added `gadget` to the general maps/symbol keyword list (for Frida libraries loaded from non-`/data/app`
+  paths, e.g. `/data/local/tmp` or `memfd`).
+
+Lab-verified on the API-29 emulator: the gadget now trips **both** `debug_frida_threads` **and**
+`native_frida_lib`. Clean Samsung A51: no new false positives, no crash (score 0 on the root axis).
+
+Note (honest scope): these harden *detection* redundancy. A Frida with full runtime control can still hook
+the final `DetectionResult` getters to lie to the host — demonstrated in the lab (scan found 21 indicators,
+but a hook forced `isRooted=false`). The durable defense against that is off-device verification
+(Play Integrity / server-side attestation); on-device RASP raises cost, it is not absolute.
+
 ## [1.9.4] — Native redundant signature pin (survives smali patch-out)
 
 Hardens the 1.9.3 anti-tamper against an attacker who patches out the Kotlin check itself. In 1.9.3

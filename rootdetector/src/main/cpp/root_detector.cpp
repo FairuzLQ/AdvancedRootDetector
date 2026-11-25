@@ -1321,6 +1321,19 @@ Java_id_jayatech_rootdetector_detector_NativeDetector_nativeScan(JNIEnv* env, jo
     for (auto& s : scan_maps_suspicious_libs())
         results.push_back("MAPS:" + s);
 
+    // --- Frida gadget/agent library by exact name (incl. /data/app, where the general keyword
+    //     scan is suppressed) — redundant with the thread-name and port signals ---
+    {
+        std::ifstream fmaps("/proc/self/maps");
+        std::string fline; std::set<std::string> seen;
+        while (std::getline(fmaps, fline)) {
+            if (sig::is_injection_lib_line(fline)) {
+                std::string p = sig::maps_path(fline);
+                if (seen.insert(p).second) results.push_back("FRIDA_LIB:" + p);
+            }
+        }
+    }
+
     // --- Anonymous RWX pages ---
     for (auto& s : find_anonymous_rwx_mappings())
         results.push_back("ANON_RWX:" + s);
