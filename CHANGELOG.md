@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.9.4] — Native redundant signature pin (survives smali patch-out)
+
+Hardens the 1.9.3 anti-tamper against an attacker who patches out the Kotlin check itself. In 1.9.3
+the signature pin lived only in `SelfIntegrityDetector` (Kotlin): decompiling with apktool, editing
+one smali method (`detect()` → return empty list), and re-signing made `integrity_resigned` go
+silent. Verified in the lab, that single smali edit defeated it.
+
+1.9.4 runs the **same signer comparison a second time in native code**
+(`librootdetector_native.so`): a new `nativeVerifySignature` reads the app's signing certificate via
+JNI → `PackageManager`, hashes it, and compares against the pinned `RootDetector.expectedSignaturesSha256`
+entirely in C++. If none match, it emits **`integrity_resigned_native`** (CRITICAL). It runs before
+the native-scan early-return, so it also fires on an otherwise-clean device.
+
+Lab-verified on a clean Samsung A51 (all three on the same pinned build):
+- own build, own signer → no false positive (only the INFO debug-keystore note);
+- attacker-re-signed, no code patch → both `integrity_resigned` (Kotlin) **and** `integrity_resigned_native`;
+- attacker-re-signed **with `SelfIntegrityDetector.detect()` smali-neutered** → Kotlin check gone, but
+  `integrity_resigned_native` **still fires**.
+
+Defeating the pin now requires patching native ARM code (Ghidra/radare2) *and* the Kotlin layer, not a
+one-line smali edit. Fails closed and never throws into the host app (any JNI error → no indicator).
+No new configuration — uses the existing `expectedSignaturesSha256` pin; with no pin set it is a no-op.
+
 ## [1.9.3] — Self-protection: anti-tamper (repackage / re-sign / library removal)
 
 Defends the detector against being patched out of the host app. Android enforces APK signatures, so

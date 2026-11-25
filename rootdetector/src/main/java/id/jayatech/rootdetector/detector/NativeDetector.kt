@@ -48,6 +48,7 @@ internal class NativeDetector(context: Context, props: PropSnapshot = PropSnapsh
 
     private external fun nativeScan(): Array<String>
     private external fun nativeProbeKernelSU(): Boolean
+    private external fun nativeVerifySignature(context: Context): String
 
     override fun detect(): List<RootIndicator> {
         // A legitimate build always ships librootdetector_native.so for every Android ABI
@@ -62,13 +63,31 @@ internal class NativeDetector(context: Context, props: PropSnapshot = PropSnapsh
             risk = RiskLevel.HIGH,
             evidence = listOf("System.loadLibrary(rootdetector_native) failed")
         ))
+        val findings = mutableListOf<RootIndicator>()
+
+        // Native redundant signature pin — runs the SelfIntegrityDetector check again, but in the
+        // .so, and BEFORE the scan-results guard so it fires on an otherwise-clean device too. If an
+        // attacker smali-patches SelfIntegrityDetector to go silent, this still fires: disabling it
+        // means patching native ARM code (Ghidra/radare2), not one Kotlin method.
+        val resignedSig = try { nativeVerifySignature(context) } catch (_: Throwable) { "" }
+        if (resignedSig.isNotEmpty()) {
+            findings += RootIndicator(
+                id = "integrity_resigned_native",
+                category = DetectorCategory.INTEGRITY,
+                title = "App Re-signed (native check)",
+                detail = "The native library independently verified the app's signing certificate against " +
+                    "the pinned release signer(s) and found no match — the APK was repackaged and re-signed. " +
+                    "This runs in native code, so patching the Kotlin layer does not disable it.",
+                risk = RiskLevel.CRITICAL,
+                evidence = listOf("native signer sha256=${resignedSig.take(32)}…")
+            )
+        }
+
         val rawResults = try { nativeScan() } catch (_: Exception) { emptyArray() }
-        if (rawResults.isEmpty()) return emptyList()
+        if (rawResults.isEmpty()) return findings
 
         val byPrefix = rawResults.groupBy { it.substringBefore(':') }
             .mapValues { (_, v) -> v.map { it.substringAfter(':') } }
-
-        val findings = mutableListOf<RootIndicator>()
 
         // Suspicious .so files in process maps (system paths already filtered in C++)
         byPrefix["MAPS"]?.takeIf { it.isNotEmpty() }?.let {

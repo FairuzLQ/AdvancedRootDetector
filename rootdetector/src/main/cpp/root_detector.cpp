@@ -1144,6 +1144,145 @@ static std::vector<std::string> detect_apatch_supath_divergence() {
     return hits;
 }
 
+// Native-side signature pin — redundant with the Kotlin SelfIntegrityDetector. Reads the app's
+// signing certificate (JNI -> PackageManager) and the pinned release signer set
+// (RootDetector.expectedSignaturesSha256), compares in native code, and returns the actual signer
+// SHA-256 (lowercase hex) when it matches NONE of the pinned signers — i.e. the APK was repackaged
+// and re-signed. Returns "" when the check passes, no pin is configured, or anything is unreadable
+// (never throws into the host app). Because the logic lives in the .so, defeating it requires
+// patching native ARM code, not just editing one smali method in the Kotlin layer.
+static std::string native_self_signature_mismatch(JNIEnv* env, jobject context) {
+    auto clearEx = [&]() { if (env->ExceptionCheck()) env->ExceptionClear(); };
+    if (!context) return "";
+
+    jclass rdCls = env->FindClass("id/jayatech/rootdetector/RootDetector");
+    if (!rdCls) { clearEx(); return ""; }
+    jmethodID getExpected = env->GetStaticMethodID(rdCls, "getExpectedSignaturesSha256", "()Ljava/util/Set;");
+    if (!getExpected) { clearEx(); return ""; }
+    jobject expectedSet = env->CallStaticObjectMethod(rdCls, getExpected);
+    if (env->ExceptionCheck() || !expectedSet) { clearEx(); return ""; }
+
+    jclass setCls = env->FindClass("java/util/Set");
+    jmethodID setIsEmpty = env->GetMethodID(setCls, "isEmpty", "()Z");
+    if (!setIsEmpty || env->CallBooleanMethod(expectedSet, setIsEmpty)) { clearEx(); return ""; } // no pin
+
+    std::vector<std::string> expected;
+    {
+        jmethodID setIter = env->GetMethodID(setCls, "iterator", "()Ljava/util/Iterator;");
+        jobject it = setIter ? env->CallObjectMethod(expectedSet, setIter) : nullptr;
+        if (!it) { clearEx(); return ""; }
+        jclass itCls = env->GetObjectClass(it);
+        jmethodID hasNext = env->GetMethodID(itCls, "hasNext", "()Z");
+        jmethodID next = env->GetMethodID(itCls, "next", "()Ljava/lang/Object;");
+        while (hasNext && next && env->CallBooleanMethod(it, hasNext)) {
+            jstring s = (jstring)env->CallObjectMethod(it, next);
+            if (!s) continue;
+            const char* c = env->GetStringUTFChars(s, nullptr);
+            if (c) {
+                std::string v(c);
+                for (auto& ch : v) ch = (char)tolower((unsigned char)ch);
+                expected.push_back(v);
+                env->ReleaseStringUTFChars(s, c);
+            }
+            env->DeleteLocalRef(s);
+        }
+        env->DeleteLocalRef(it);
+    }
+    if (expected.empty()) { clearEx(); return ""; }
+
+    jint sdk = 0;
+    {
+        jclass verCls = env->FindClass("android/os/Build$VERSION");
+        if (verCls) {
+            jfieldID sdkFid = env->GetStaticFieldID(verCls, "SDK_INT", "I");
+            if (sdkFid) sdk = env->GetStaticIntField(verCls, sdkFid);
+        }
+    }
+
+    jclass ctxCls = env->GetObjectClass(context);
+    jmethodID getPM = env->GetMethodID(ctxCls, "getPackageManager", "()Landroid/content/pm/PackageManager;");
+    jmethodID getPkg = env->GetMethodID(ctxCls, "getPackageName", "()Ljava/lang/String;");
+    if (!getPM || !getPkg) { clearEx(); return ""; }
+    jobject pm = env->CallObjectMethod(context, getPM);
+    jstring pkg = (jstring)env->CallObjectMethod(context, getPkg);
+    if (env->ExceptionCheck() || !pm || !pkg) { clearEx(); return ""; }
+
+    jclass pmCls = env->GetObjectClass(pm);
+    jmethodID getPI = env->GetMethodID(pmCls, "getPackageInfo", "(Ljava/lang/String;I)Landroid/content/pm/PackageInfo;");
+    if (!getPI) { clearEx(); return ""; }
+    jint flags = (sdk >= 28) ? 0x08000000 /*GET_SIGNING_CERTIFICATES*/ : 0x40 /*GET_SIGNATURES*/;
+    jobject pi = env->CallObjectMethod(pm, getPI, pkg, flags);
+    if (env->ExceptionCheck() || !pi) { clearEx(); return ""; }
+
+    jclass piCls = env->GetObjectClass(pi);
+    jobjectArray sigs = nullptr;
+    if (sdk >= 28) {
+        jfieldID siFid = env->GetFieldID(piCls, "signingInfo", "Landroid/content/pm/SigningInfo;");
+        jobject si = siFid ? env->GetObjectField(pi, siFid) : nullptr;
+        if (si) {
+            jclass siCls = env->GetObjectClass(si);
+            jmethodID hasMulti = env->GetMethodID(siCls, "hasMultipleSigners", "()Z");
+            jmethodID getApk = env->GetMethodID(siCls, "getApkContentsSigners", "()[Landroid/content/pm/Signature;");
+            jmethodID getHist = env->GetMethodID(siCls, "getSigningCertificateHistory", "()[Landroid/content/pm/Signature;");
+            jboolean multi = hasMulti ? env->CallBooleanMethod(si, hasMulti) : JNI_FALSE;
+            jmethodID use = multi ? getApk : getHist;
+            if (use) sigs = (jobjectArray)env->CallObjectMethod(si, use);
+        }
+    } else {
+        jfieldID sigFid = env->GetFieldID(piCls, "signatures", "[Landroid/content/pm/Signature;");
+        if (sigFid) sigs = (jobjectArray)env->GetObjectField(pi, sigFid);
+    }
+    if (env->ExceptionCheck() || !sigs) { clearEx(); return ""; }
+    jsize n = env->GetArrayLength(sigs);
+    if (n <= 0) { clearEx(); return ""; }
+
+    jclass mdCls = env->FindClass("java/security/MessageDigest");
+    jmethodID mdGet = mdCls ? env->GetStaticMethodID(mdCls, "getInstance",
+        "(Ljava/lang/String;)Ljava/security/MessageDigest;") : nullptr;
+    if (!mdGet) { clearEx(); return ""; }
+    jstring algo = env->NewStringUTF("SHA-256");
+    jobject md = env->CallStaticObjectMethod(mdCls, mdGet, algo);
+    env->DeleteLocalRef(algo);
+    if (env->ExceptionCheck() || !md) { clearEx(); return ""; }
+    jmethodID mdDigest = env->GetMethodID(mdCls, "digest", "([B)[B");
+    jclass sigCls = env->FindClass("android/content/pm/Signature");
+    jmethodID toBytes = sigCls ? env->GetMethodID(sigCls, "toByteArray", "()[B") : nullptr;
+    if (!mdDigest || !toBytes) { clearEx(); return ""; }
+
+    static const char* HEX = "0123456789abcdef";
+    std::string firstActual;
+    for (jsize i = 0; i < n; i++) {
+        jobject sg = env->GetObjectArrayElement(sigs, i);
+        if (!sg) continue;
+        jbyteArray certBytes = (jbyteArray)env->CallObjectMethod(sg, toBytes);
+        if (certBytes) {
+            jbyteArray dig = (jbyteArray)env->CallObjectMethod(md, mdDigest, certBytes);
+            if (dig) {
+                jsize dn = env->GetArrayLength(dig);
+                std::vector<unsigned char> buf((size_t)dn);
+                env->GetByteArrayRegion(dig, 0, dn, (jbyte*)buf.data());
+                std::string hx; hx.reserve((size_t)dn * 2);
+                for (jsize k = 0; k < dn; k++) {
+                    hx.push_back(HEX[(buf[(size_t)k] >> 4) & 0xf]);
+                    hx.push_back(HEX[buf[(size_t)k] & 0xf]);
+                }
+                if (firstActual.empty()) firstActual = hx;
+                for (auto& e : expected) {
+                    if (e == hx) {  // a pinned signer matched -> genuine build
+                        env->DeleteLocalRef(dig); env->DeleteLocalRef(certBytes); env->DeleteLocalRef(sg);
+                        clearEx(); return "";
+                    }
+                }
+                env->DeleteLocalRef(dig);
+            }
+            env->DeleteLocalRef(certBytes);
+        }
+        env->DeleteLocalRef(sg);
+    }
+    clearEx();
+    return firstActual;  // no pinned signer matched -> re-signed / repackaged
+}
+
 // =============================================================================
 // JNI bridge — aggregate all results
 // =============================================================================
@@ -1294,6 +1433,15 @@ Java_id_jayatech_rootdetector_detector_NativeDetector_nativeScan(JNIEnv* env, jo
 JNIEXPORT jboolean JNICALL
 Java_id_jayatech_rootdetector_detector_NativeDetector_nativeProbeKernelSU(JNIEnv*, jobject) {
     return probe_kernelsu_syscall_safe() ? JNI_TRUE : JNI_FALSE;
+}
+
+// Native redundant signature pin. Returns the actual signer SHA-256 hex if the running app's
+// signer matches none of the pinned release signers (re-signed / repackaged), else "".
+JNIEXPORT jstring JNICALL
+Java_id_jayatech_rootdetector_detector_NativeDetector_nativeVerifySignature(JNIEnv* env, jobject, jobject context) {
+    std::string m = native_self_signature_mismatch(env, context);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    return env->NewStringUTF(m.c_str());
 }
 
 // APatch + KPM behavioral probes. Needs the app's writable dir for the openat honeypot.
